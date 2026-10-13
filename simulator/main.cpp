@@ -1,0 +1,647 @@
+#include "types.h"
+#include "math_constants.h"
+#include "uca_geometry.h"
+#include "source_model.h"
+#include "scene.h"
+#include "dataset/generator.h"
+#include "params.h"
+#include "core/dolphin_whistle_test.h"
+
+#include <iostream>
+#include <iomanip>
+#include <array>
+#include <vector>
+#include <fstream>
+#include <cstdint>
+#include <string>
+#include <algorithm>
+#include <memory>
+#include <windows.h>
+
+using namespace hydro;
+
+// ------------------------------------------------------------
+//  WAV-писатель (для одиночных тестовых файлов).
+// ------------------------------------------------------------
+template <typename Channels>
+static bool writeWavFloat32(const std::string& path,
+                            const Channels& channels,
+                            int sampleRate)
+{
+    if (channels.empty()) return false;
+    const uint16_t numChannels = static_cast<uint16_t>(channels.size());
+    const size_t numSamples = channels[0].size();
+    for (const auto& ch : channels)
+    {
+        if (ch.size() != numSamples) return false;
+    }
+
+    std::ofstream f(path, std::ios::binary);
+    if (!f) return false;
+
+    const uint32_t dataBytes = static_cast<uint32_t>(numSamples * numChannels * 4);
+    const uint32_t fmtChunkSize = 16;
+    const uint16_t audioFormat = 3;
+    const uint16_t bitsPerSample = 32;
+    const uint32_t byteRate = sampleRate * numChannels * (bitsPerSample / 8);
+    const uint16_t blockAlign = numChannels * (bitsPerSample / 8);
+    const uint32_t riffSize = 4 + (8 + fmtChunkSize) + (8 + dataBytes);
+
+    auto writeU32 = [&](uint32_t v) { f.write(reinterpret_cast<const char*>(&v), 4); };
+    auto writeU16 = [&](uint16_t v) { f.write(reinterpret_cast<const char*>(&v), 2); };
+
+    f.write("RIFF", 4);
+    writeU32(riffSize);
+    f.write("WAVE", 4);
+    f.write("fmt ", 4);
+    writeU32(fmtChunkSize);
+    writeU16(audioFormat);
+    writeU16(numChannels);
+    writeU32(sampleRate);
+    writeU32(byteRate);
+    writeU16(blockAlign);
+    writeU16(bitsPerSample);
+    f.write("data", 4);
+    writeU32(dataBytes);
+
+    std::vector<float> frame(numChannels);
+    for (size_t s = 0; s < numSamples; ++s)
+    {
+        for (uint16_t c = 0; c < numChannels; ++c)
+        {
+            frame[c] = channels[c][s];
+        }
+        f.write(reinterpret_cast<const char*>(frame.data()), numChannels * 4);
+    }
+    return true;
+}
+
+// ------------------------------------------------------------
+//  WAV-писатель для МОНО (один канал).
+// ------------------------------------------------------------
+static bool writeMonoWavFloat32(const std::string& path,
+                                const std::vector<float>& samples,
+                                int sampleRate)
+{
+    if (samples.empty()) return false;
+
+    std::ofstream f(path, std::ios::binary);
+    if (!f) return false;
+
+    const uint16_t numChannels = 1;
+    const size_t numSamples = samples.size();
+    const uint32_t dataBytes = static_cast<uint32_t>(numSamples * 4);
+    const uint32_t fmtChunkSize = 16;
+    const uint16_t audioFormat = 3;
+    const uint16_t bitsPerSample = 32;
+    const uint32_t byteRate = sampleRate * numChannels * (bitsPerSample / 8);
+    const uint16_t blockAlign = numChannels * (bitsPerSample / 8);
+    const uint32_t riffSize = 4 + (8 + fmtChunkSize) + (8 + dataBytes);
+
+    auto writeU32 = [&](uint32_t v) { f.write(reinterpret_cast<const char*>(&v), 4); };
+    auto writeU16 = [&](uint16_t v) { f.write(reinterpret_cast<const char*>(&v), 2); };
+
+    f.write("RIFF", 4);
+    writeU32(riffSize);
+    f.write("WAVE", 4);
+    f.write("fmt ", 4);
+    writeU32(fmtChunkSize);
+    writeU16(audioFormat);
+    writeU16(numChannels);
+    writeU32(sampleRate);
+    writeU32(byteRate);
+    writeU16(blockAlign);
+    writeU16(bitsPerSample);
+    f.write("data", 4);
+    writeU32(dataBytes);
+
+    f.write(reinterpret_cast<const char*>(samples.data()), dataBytes);
+    return true;
+}
+
+// ------------------------------------------------------------
+//  Спектр (DFT) + ASCII-график.
+// ------------------------------------------------------------
+static std::vector<float> amplitudeSpectrum(const std::vector<float>& x)
+{
+    const int N = static_cast<int>(x.size());
+    const int half = N / 2;
+    std::vector<float> spec(half, 0.0f);
+    std::vector<float> w(N);
+    for (int i = 0; i < N; ++i)
+        w[i] = 0.5f * (1.0f - std::cos(TWO_PI_F * i / (N - 1)));
+
+    for (int k = 0; k < half; ++k)
+    {
+        float re = 0.0f, im = 0.0f;
+        const float wk = -TWO_PI_F * k / N;
+        for (int n = 0; n < N; ++n)
+        {
+            const float xn = x[n] * w[n];
+            const float ang = wk * n;
+            re += xn * std::cos(ang);
+            im += xn * std::sin(ang);
+        }
+        spec[k] = std::sqrt(re * re + im * im) / (N * 0.5f);
+    }
+    return spec;
+}
+
+static void printSpectrumAscii(const std::vector<float>& spectrum,
+                               float fs, int fftSize, int topN = 15)
+{
+    struct Peak
+    {
+        int bin;
+        float freq;
+        float amp;
+    };
+    std::vector<Peak> peaks;
+    for (int k = 2; k < static_cast<int>(spectrum.size()) - 1; ++k)
+    {
+        if (spectrum[k] > spectrum[k - 1] && spectrum[k] > spectrum[k + 1])
+            peaks.push_back({k, k * fs / fftSize, spectrum[k]});
+    }
+    std::sort(peaks.begin(), peaks.end(),
+              [](const Peak& a, const Peak& b) { return a.amp > b.amp; });
+    if (static_cast<int>(peaks.size()) > topN) peaks.resize(topN);
+    std::sort(peaks.begin(), peaks.end(),
+              [](const Peak& a, const Peak& b) { return a.freq < b.freq; });
+
+    float maxAmp = 0.0f;
+    for (const auto& p : peaks) if (p.amp > maxAmp) maxAmp = p.amp;
+    if (maxAmp <= 0.0f) maxAmp = 1.0f;
+
+    std::cout << "  Freq (Hz)  |  Amplitude  |  Bar\n";
+    std::cout << "  -----------+-------------+--------------------------------\n";
+    for (const auto& p : peaks)
+    {
+        const int barLen = static_cast<int>(30.0f * p.amp / maxAmp + 0.5f);
+        std::string bar(barLen, '#');
+        std::cout << "  " << std::setw(9) << std::fixed << std::setprecision(2)
+            << p.freq << "  |  "
+            << std::setw(9) << std::setprecision(5) << p.amp
+            << "  |  " << bar << "\n";
+    }
+    std::cout << "\n";
+}
+
+// ------------------------------------------------------------
+//  Вспомогательная: спросить y/n.
+// ------------------------------------------------------------
+static int askYesNo(const std::string& prompt)
+{
+    while (true)
+    {
+        std::cout << prompt << " [y/n/q]: ";
+        std::string line;
+        if (!std::getline(std::cin, line)) return -1;
+        if (line.empty()) continue;
+        char c = static_cast<char>(std::tolower(line[0]));
+        if (c == 'y') return 1;
+        if (c == 'n') return 0;
+        if (c == 'q' || c == '0') return -1;
+    }
+}
+
+// ------------------------------------------------------------
+//  Сборка сцены по выбору пользователя + генерация WAV.
+// ------------------------------------------------------------
+static void runCustomScene(const UcaGeometry& uca, float fs)
+{
+    std::cout << "\n=== Сборка сцены ===\n";
+
+    bool useProp = false;
+    bool useEng = false;
+    bool useDolphin = false;
+    bool useOcean = false;
+
+    while (true)
+    {
+        int r = askYesNo("Включить ВИНТ?      ");
+        if (r < 0) return;
+        useProp = (r == 1);
+
+        r = askYesNo("Включить ДВИГАТЕЛЬ? ");
+        if (r < 0) return;
+        useEng = (r == 1);
+
+        r = askYesNo("Включить ДЕЛЬФИНА?  ");
+        if (r < 0) return;
+        useDolphin = (r == 1);
+
+        r = askYesNo("Включить ШУМ ОКЕАНА?");
+        if (r < 0) return;
+        useOcean = (r == 1);
+
+        if (useProp || useEng || useDolphin || useOcean) break;
+        std::cout << "!!! Нужна хотя бы одна компонента. Повторите.\n\n";
+    }
+
+    float azimuth = SCENE_AZIMUTH_DEG;
+    if (useProp || useEng || useDolphin)
+    {
+        std::cout << "Азимут (0..359) [Enter = " << SCENE_AZIMUTH_DEG << "]: ";
+        std::string line;
+        std::getline(std::cin, line);
+        if (!line.empty())
+        {
+            try { azimuth = std::stof(line); }
+            catch (...) { azimuth = SCENE_AZIMUTH_DEG; }
+        }
+    }
+
+    float recvSnr = SCENE_RECEIVER_SNR_DB;
+    std::cout << "SNR приёмника (dB) [Enter = " << SCENE_RECEIVER_SNR_DB << "]: ";
+    {
+        std::string line;
+        std::getline(std::cin, line);
+        if (!line.empty())
+        {
+            try { recvSnr = std::stof(line); }
+            catch (...) { recvSnr = SCENE_RECEIVER_SNR_DB; }
+        }
+    }
+
+    const int totalSamples = static_cast<int>(fs) * SCENE_DURATION_SEC;
+
+    SceneParams baseSp;
+    baseSp.azimuthDeg = azimuth;
+    baseSp.soundSpeed = SOUND_SPEED_WATER;
+    baseSp.receiverSnrDb = recvSnr;
+    baseSp.noiseSeed = 42;
+    baseSp.oceanEnabled = false;
+
+    auto fillOceanParams = [](OceanNoiseParams& op)
+    {
+        op.level = OCEAN_LEVEL;
+        op.rumbleWeight = OCEAN_RUMBLE_WEIGHT;
+        op.midWeight = OCEAN_MID_WEIGHT;
+        op.hissWeight = OCEAN_HISS_WEIGHT;
+        op.rumbleSlope = OCEAN_RUMBLE_SLOPE;
+        op.midSlope = OCEAN_MID_SLOPE;
+        op.hissSlope = OCEAN_HISS_SLOPE;
+        op.spikeRate = OCEAN_SPIKE_RATE;
+        op.spikeAmp = OCEAN_SPIKE_AMP;
+        op.spikeSpatialFrac = OCEAN_SPIKE_SPATIAL_FRAC;
+        op.dropTauMinMs = OCEAN_DROP_TAU_MIN_MS;
+        op.dropTauMaxMs = OCEAN_DROP_TAU_MAX_MS;
+        op.bubbleTauMinMs = OCEAN_BUBBLE_TAU_MIN_MS;
+        op.bubbleTauMaxMs = OCEAN_BUBBLE_TAU_MAX_MS;
+        op.bubbleFreqStartMin = OCEAN_BUBBLE_F0_MIN;
+        op.bubbleFreqStartMax = OCEAN_BUBBLE_F0_MAX;
+        op.bubbleFreqEndMin = OCEAN_BUBBLE_F1_MIN;
+        op.bubbleFreqEndMax = OCEAN_BUBBLE_F1_MAX;
+        op.clickTauMinMs = OCEAN_CLICK_TAU_MIN_MS;
+        op.clickTauMaxMs = OCEAN_CLICK_TAU_MAX_MS;
+        op.echoCount = OCEAN_ECHO_COUNT;
+        op.echoDelayMinMs = OCEAN_ECHO_DELAY_MIN_MS;
+        op.echoDelayMaxMs = OCEAN_ECHO_DELAY_MAX_MS;
+        op.echoGainMin = OCEAN_ECHO_GAIN_MIN;
+        op.echoGainMax = OCEAN_ECHO_GAIN_MAX;
+        op.echoAzSpreadDeg = OCEAN_ECHO_AZ_SPREAD_DEG;
+        op.waveRate = OCEAN_WAVE_RATE;
+        op.waveAmp = OCEAN_WAVE_AMP;
+        op.waveDurationMinS = OCEAN_WAVE_DURATION_MIN_S;
+        op.waveDurationMaxS = OCEAN_WAVE_DURATION_MAX_S;
+        op.waveSpatialFrac = OCEAN_WAVE_SPATIAL_FRAC;
+        op.modulationDepth = OCEAN_MODULATION_DEPTH;
+        op.modulationHz = OCEAN_MODULATION_HZ;
+        op.seed = OCEAN_SEED;
+    };
+
+    auto makeProp = []() -> std::unique_ptr<SourceModel>
+    {
+        PropellerParams pp;
+        pp.numBlades = PROP_NUM_BLADES;
+        pp.rpm = PROP_RPM;
+        pp.depthM = PROP_DEPTH_M;
+        pp.numHarmonics = PROP_NUM_HARMONICS;
+        pp.modulationDepth = PROP_MODULATION_DEPTH;
+        pp.modulationHz = PROP_MODULATION_HZ;
+        pp.cavitation = PROP_CAVITATION;
+        pp.snrDb = PROP_SNR_DB;
+        pp.seed = PROP_SEED;
+        return std::make_unique<PropellerSubmarine>(pp);
+    };
+
+    auto makeEng = []() -> std::unique_ptr<SourceModel>
+    {
+        EngineParams ep;
+        ep.rpm = ENG_RPM;
+        ep.numHarmonics = ENG_NUM_HARMONICS;
+        ep.numResonances = ENG_NUM_RESONANCES;
+        ep.mechNoiseLevel = ENG_MECH_NOISE_LEVEL;
+        ep.snrDb = ENG_SNR_DB;
+        ep.seed = ENG_SEED;
+        return std::make_unique<EngineSubmarine>(ep);
+    };
+
+    auto makeDolphin = []() -> std::unique_ptr<SourceModel>
+    {
+        DolphinParams dp;
+        dp.numWhistlesPerSec = DOLPHIN_WHISTLES_PER_SEC;
+        dp.whistleDurationMin = DOLPHIN_WHISTLE_DUR_MIN;
+        dp.whistleDurationMax = DOLPHIN_WHISTLE_DUR_MAX;
+        dp.whistleFreqMin = DOLPHIN_WHISTLE_FREQ_MIN;
+        dp.whistleFreqMax = DOLPHIN_WHISTLE_FREQ_MAX;
+        dp.whistleSweepDepth = DOLPHIN_WHISTLE_SWEEP;
+        dp.numHarmonics = DOLPHIN_NUM_HARMONICS;
+        dp.clickRate = DOLPHIN_CLICK_RATE;
+        dp.clickDurationUs = DOLPHIN_CLICK_DUR_US;
+        dp.clickFreqMin = DOLPHIN_CLICK_FREQ_MIN;
+        dp.clickFreqMax = DOLPHIN_CLICK_FREQ_MAX;
+        dp.clicksPerTrain = DOLPHIN_CLICKS_PER_TRAIN;
+        dp.burstRate = DOLPHIN_BURST_RATE;
+        dp.burstDurationMin = DOLPHIN_BURST_DUR_MIN;
+        dp.burstDurationMax = DOLPHIN_BURST_DUR_MAX;
+        dp.burstClickIntervalUs = DOLPHIN_BURST_CLICK_US;
+        dp.burstFreqMin = DOLPHIN_BURST_FREQ_MIN;
+        dp.burstFreqMax = DOLPHIN_BURST_FREQ_MAX;
+        dp.snrDb = DOLPHIN_SNR_DB;
+        dp.seed = DOLPHIN_SEED;
+        return std::make_unique<Dolphin>(dp);
+    };
+
+    if (useProp)
+    {
+        SceneParams sp = baseSp;
+        Scene scene;
+        scene.setParams(sp);
+        scene.addSource(makeProp());
+
+        std::array<std::vector<float>, NUM_CHANNELS> ch8;
+        scene.generate(ch8, totalSamples, fs, uca);
+
+        const std::string name = "scene_propeller.wav";
+        if (writeWavFloat32(name, ch8, static_cast<int>(fs)))
+            std::cout << "  Saved: " << name << "\n";
+        else
+            std::cout << "  FAILED: " << name << "\n";
+    }
+
+    if (useEng)
+    {
+        SceneParams sp = baseSp;
+        Scene scene;
+        scene.setParams(sp);
+        scene.addSource(makeEng());
+
+        std::array<std::vector<float>, NUM_CHANNELS> ch8;
+        scene.generate(ch8, totalSamples, fs, uca);
+
+        const std::string name = "scene_engine.wav";
+        if (writeWavFloat32(name, ch8, static_cast<int>(fs)))
+            std::cout << "  Saved: " << name << "\n";
+        else
+            std::cout << "  FAILED: " << name << "\n";
+    }
+
+    if (useDolphin)
+    {
+        SceneParams sp = baseSp;
+        Scene scene;
+        scene.setParams(sp);
+        scene.addSource(makeDolphin());
+
+        std::array<std::vector<float>, NUM_CHANNELS> ch8;
+        scene.generate(ch8, totalSamples, fs, uca);
+
+        const std::string name = "scene_dolphin.wav";
+        if (writeWavFloat32(name, ch8, static_cast<int>(fs)))
+            std::cout << "  Saved: " << name << "\n";
+        else
+            std::cout << "  FAILED: " << name << "\n";
+    }
+
+    if (useOcean)
+    {
+        SceneParams sp = baseSp;
+        sp.oceanEnabled = true;
+        fillOceanParams(sp.oceanParams);
+
+        Scene scene;
+        scene.setParams(sp);
+
+        std::array<std::vector<float>, NUM_CHANNELS> ch8;
+        scene.generate(ch8, totalSamples, fs, uca);
+
+        const std::string name = "scene_ocean.wav";
+        if (writeWavFloat32(name, ch8, static_cast<int>(fs)))
+            std::cout << "  Saved: " << name << "\n";
+        else
+            std::cout << "  FAILED: " << name << "\n";
+    }
+
+    {
+        SceneParams sp = baseSp;
+        if (useOcean)
+        {
+            sp.oceanEnabled = true;
+            fillOceanParams(sp.oceanParams);
+        }
+
+        Scene scene;
+        scene.setParams(sp);
+        if (useProp) scene.addSource(makeProp());
+        if (useEng) scene.addSource(makeEng());
+        if (useDolphin) scene.addSource(makeDolphin());
+
+        std::array<std::vector<float>, NUM_CHANNELS> ch8;
+        scene.generate(ch8, totalSamples, fs, uca);
+
+        const std::string name = "scene_combined.wav";
+        if (writeWavFloat32(name, ch8, static_cast<int>(fs)))
+            std::cout << "  Saved: " << name << "\n";
+        else
+            std::cout << "  FAILED: " << name << "\n";
+
+        std::cout << "\n  Spectrum (combined, channel 0, first 8192 samples):\n";
+        const int FFT_N = std::min(8192, totalSamples);
+        std::vector<float> seg(ch8[0].begin(), ch8[0].begin() + FFT_N);
+        auto spec = amplitudeSpectrum(seg);
+        printSpectrumAscii(spec, fs, FFT_N, 15);
+    }
+
+    std::cout << "\n";
+}
+
+// ------------------------------------------------------------
+//  Режим "1" — одиночные тестовые WAV.
+// ------------------------------------------------------------
+static void generateSingleFiles(const UcaGeometry& uca, float fs)
+{
+    runCustomScene(uca, fs);
+}
+
+// ------------------------------------------------------------
+//  ТЕСТОВЫЙ РЕЖИМ: генерация свиста дельфина (моно).
+//
+//  Новая архитектура: НЕПРЕРЫВНЫЙ длинный ЧМ-сигнал
+//  на всю длительность, U-образная траектория частоты,
+//  низкие частоты — часть свиста, стрёкот — «шершавый».
+// ------------------------------------------------------------
+static void generateWhistleTest(float fs)
+{
+    std::cout << "\n=== ТЕСТ: свист дельфина (моно) ===\n";
+    std::cout << "  Модель: DolphinWhistleTest\n";
+    std::cout << "  Длительность: 5 сек\n";
+    std::cout << "  Частота дискретизации: " << fs << " Гц\n";
+    std::cout << "  Формат: моно, 32-bit float\n\n";
+
+    DolphinWhistleTestParams p;
+    p.fs = fs;
+    p.durationSec = 5.0f;
+
+    p.seed = 77777;
+
+    DolphinWhistleTest gen(p);
+
+    const int totalSamples = static_cast<int>(fs * p.durationSec);
+    std::vector<float> buffer(totalSamples, 0.0f);
+
+    gen.generate(buffer.data(), totalSamples);
+
+    const std::string name = "whistle_test.wav";
+    if (writeMonoWavFloat32(name, buffer, static_cast<int>(fs)))
+        std::cout << "  Saved: " << name << "\n";
+    else
+        std::cout << "  FAILED: " << name << "\n";
+
+    std::cout << "  Прогоните " << name << " через sound_digit и пришлите отчёт.\n\n";
+}
+
+// ------------------------------------------------------------
+//  Режим "2" — пакетный датасет.
+// ------------------------------------------------------------
+static void generateDataset(const UcaGeometry& uca, float fs)
+{
+    std::cout << "\n=== Генерация датасета ===\n";
+
+    DatasetSelection sel;
+    while (true)
+    {
+        int r = askYesNo("Генерировать PropellerSub?");
+        if (r < 0) return;
+        sel.propeller = (r == 1);
+
+        r = askYesNo("Генерировать EngineSub?   ");
+        if (r < 0) return;
+        sel.engine = (r == 1);
+
+        r = askYesNo("Генерировать Dolphin?     ");
+        if (r < 0) return;
+        sel.dolphin = (r == 1);
+
+        r = askYesNo("Генерировать OceanNoise?  ");
+        if (r < 0) return;
+        sel.ocean = (r == 1);
+
+        if (sel.propeller || sel.engine || sel.dolphin || sel.ocean) break;
+        std::cout << "!!! Хотя бы один класс должен быть выбран. Повторите.\n\n";
+    }
+
+    DatasetParams dp;
+    dp.uniformAzimuth = true;
+    dp.azimuthDeg = SCENE_AZIMUTH_DEG;
+
+    if (sel.propeller || sel.engine || sel.dolphin)
+    {
+        int r = askYesNo("Равномерный азимут 0..359?  ");
+        if (r < 0) return;
+        dp.uniformAzimuth = (r == 1);
+
+        if (!dp.uniformAzimuth)
+        {
+            std::cout << "Конкретный азимут (0..359) [Enter = " << SCENE_AZIMUTH_DEG << "]: ";
+            std::string line;
+            std::getline(std::cin, line);
+            if (!line.empty())
+            {
+                try { dp.azimuthDeg = std::stof(line); }
+                catch (...) { dp.azimuthDeg = SCENE_AZIMUTH_DEG; }
+            }
+        }
+    }
+
+    dp.receiverSnrDb = SCENE_RECEIVER_SNR_DB;
+    std::cout << "SNR приёмника (dB) [Enter = " << SCENE_RECEIVER_SNR_DB << "]: ";
+    {
+        std::string line;
+        std::getline(std::cin, line);
+        if (!line.empty())
+        {
+            try { dp.receiverSnrDb = std::stof(line); }
+            catch (...) { dp.receiverSnrDb = SCENE_RECEIVER_SNR_DB; }
+        }
+    }
+
+    int n = 0;
+    std::cout << "Сколько файлов на класс? [Enter = 10]: ";
+    std::string line;
+    std::getline(std::cin, line);
+    if (!line.empty())
+    {
+        try { n = std::stoi(line); }
+        catch (...) { n = 0; }
+    }
+    if (n <= 0) n = 10;
+
+    dp.filesPerClass = n;
+    dp.durationSec = SCENE_DURATION_SEC;
+    dp.sampleRate = fs;
+    dp.outputDir = "dataset";
+
+    DatasetGenerator gen(uca, dp, sel);
+    gen.generate();
+}
+
+// ------------------------------------------------------------
+//  main
+// ------------------------------------------------------------
+int main()
+{
+#ifdef _WIN32
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+#endif
+
+    std::cout << "=== hydroacoustic ===\n";
+
+    UcaGeometry uca(NUM_CHANNELS, UCA_RADIUS_M);
+    const float fs = static_cast<float>(SAMPLE_RATE);
+
+    while (true)
+    {
+        std::cout << "\n";
+        std::cout << "  1 - Сгенерировать одиночный WAV (интерактивный выбор)\n";
+        std::cout << "  2 - Сгенерировать пакетный датасет\n";
+        std::cout << "  3 - ТЕСТ: свист дельфина (моно, отдельная модель)\n";
+        std::cout << "  0 - Выход\n";
+        std::cout << "Выбор: ";
+
+        std::string choice;
+        if (!std::getline(std::cin, choice)) break;
+        if (choice == "0") break;
+
+        if (choice == "1")
+        {
+            generateSingleFiles(uca, fs);
+        }
+        else if (choice == "2")
+        {
+            generateDataset(uca, fs);
+        }
+        else if (choice == "3")
+        {
+            generateWhistleTest(fs);
+        }
+        else
+        {
+            std::cout << "Неизвестный выбор.\n";
+        }
+    }
+
+    std::cout << "Bye.\n";
+    return 0;
+}
