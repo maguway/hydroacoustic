@@ -377,6 +377,7 @@ namespace sd
                         changed = true;
                     }
                 }
+                phrases.push_back(ph);
             }
 
             // Убираем слишком короткие фразы.
