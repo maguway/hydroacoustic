@@ -1,0 +1,1205 @@
+            const float am = 1.0f
+                - p_.seaNoiseAmDepth * 0.5f
+                + p_.seaNoiseAmDepth * 0.5f
+                * std::sin(TWO_PI_F * p_.seaNoiseAmHz * t);
+
+            buffer[n] += band * am * p_.seaNoiseLevel;
+        }
+    }
+
+    // ============================================================
+    //  Стрёкот — серия щелчков в конце каждой фразы.
+    //
+    //  Привязка: та же логика фраз, что в renderWhistle,
+    //  стрёкот идёт в последние 25% длительности фразы
+    //  (то есть когда свист «уходит в низ»).
+    //
+    //  Громкость: сравнимая со свистом.
+    //  Полоса: 8–14 кГц (УВЧ).
+    //  Щелчки: короткие (0.5–2 мс), частые (интервал 5–15 мс).
+    // ============================================================
+    void DolphinWhistleTest::renderCrackle(std::vector<float>& buffer,
+                                           int numSamples)
+    {
+        if (p_.crackleLevel <= 0.0f) return;
+
+        const float fs = p_.fs;
+        const float invFs = 1.0f / fs;
+        const float dur = static_cast<float>(numSamples) * invFs;
+
+        std::uniform_real_distribution<float> phraseDurDist(0.6f, 1.3f);
+        std::uniform_real_distribution<float> pauseDist(0.20f, 0.50f);
+        std::uniform_real_distribution<float> durDist(
+            p_.crackleDurMinMs * 0.001f,
+            p_.crackleDurMaxMs * 0.001f);
+        std::uniform_real_distribution<float> clickIntervalDist(0.005f, 0.015f);
+
+        const float fcMid = 0.5f * (p_.crackleFreqMin + p_.crackleFreqMax);
+        const float a = std::exp(-TWO_PI_F * fcMid * invFs);
+        float lp1 = 0.0f, lp2 = 0.0f;
+
+        float t = 0.0f;
+        while (t < dur)
+        {
+            const float phraseDur = phraseDurDist(rng_);
+            const float phraseEnd = std::min(t + phraseDur, dur);
+            const float phraseLen = phraseEnd - t;
+
+            // Стрёкот — в последние 25% фразы.
+            const float crackleStart = t + phraseLen * 0.75f;
+            float tc = crackleStart;
+
+            // Щелчки идут до конца фразы, но не за её пределы.
+            while (tc < phraseEnd)
+            {
+                const int idx = static_cast<int>(tc * fs);
+                if (idx < 0 || idx >= numSamples) break;
+
+                const float pulseDur = durDist(rng_);
+                const int len = static_cast<int>(pulseDur * fs) + 1;
+                const float tau = pulseDur / 2.0f;
+                const float invTau2 = 1.0f / (tau * tau + 1e-9f);
+
+                for (int k = 0; k < len; ++k)
+                {
+                    const int i = idx + k;
+                    if (i < 0 || i >= numSamples) break;
+
+                    const float tLocal = static_cast<float>(k) * invFs;
+                    const float env = std::exp(-(tLocal * tLocal) * invTau2);
+
+                    const float white = gauss_(rng_);
+                    lp1 = a * lp1 + (1.0f - a) * white;
+                    lp2 = a * lp2 + (1.0f - a) * lp1;
+                    const float band = lp1 - lp2;
+
+                    buffer[i] += band * env * p_.crackleLevel;
+                }
+
+                tc += clickIntervalDist(rng_);
+            }
+
+            // Переход к следующей фразе.
+            t = phraseEnd + pauseDist(rng_);
+        }
+    }
+
+    // ============================================================
+    //  Главный метод.
+    // ============================================================
+    void DolphinWhistleTest::generate(float* out, int numSamples)
+    {
+        if (numSamples <= 0) return;
+
+        for (int n = 0; n < numSamples; ++n) out[n] = 0.0f;
+
+        std::vector<float> buffer(numSamples, 0.0f);
+
+        rng_.seed(p_.seed);
+
+        renderSeaNoise(buffer, numSamples);
+        renderWhistle(buffer, numSamples);
+        renderCrackle(buffer, numSamples);
+
+        float maxAbs = 0.0f;
+        for (int n = 0; n < numSamples; ++n)
+        {
+            const float a = std::fabs(buffer[n]);
+            if (a > maxAbs) maxAbs = a;
+        }
+        const float scale = (maxAbs > 1e-9f) ? (0.95f / maxAbs) : 1.0f;
+
+        for (int n = 0; n < numSamples; ++n)
+            out[n] = buffer[n] * scale;
+    }
+} // namespace hydro
+
+
+
+
+
+// files\hydroacoustic\simulator\core\dolphin_whistle_test.h
+#pragma once
+#include <vector>
+#include <cstdint>
+#include <random>
+
+// ============================================================
+//  DolphinWhistleTest — модель свиста дельфина.
+//
+//  АРХИТЕКТУРА ЭТАПА 3: ПОТОК КОРОТКИХ ПЕРЕЛИВОВ.
+//
+//  Не один длинный U-перелив, а МНОГО коротких (0.1–0.4 с),
+//  идущих встык. Направление каждого — своё: вверх, вниз,
+//  U, ∩, с изломом. Диапазоны разные. Поверх — треск
+//  (шершавые короткие всплески), вплетённый в свист.
+//
+//  Три фазы сигнала:
+//    1) начало:  «два спуска сверху вниз» + короткий подъём;
+//    2) середина: рваное хаотичное движение;
+//    3) конец:   снова спуски, длинный затихающий.
+//
+//  Формат: моно, 22050 Гц, 32-bit float.
+// ============================================================
+
+namespace hydro
+{
+    struct DolphinWhistleTestParams
+    {
+        float fs = 22050.0f;
+        float durationSec = 5.0f;
+
+        // --- Свист: диапазон ---
+        float fMin = 1500.0f;
+        float fMax = 8000.0f;
+
+        // --- Свист: ЧМ-модуляция (сумма трёх синусов) ---
+        float sweepSlowHz = 0.35f; // медленная (период ~3 с)
+        float sweepSlowDepth = 1500.0f;
+        float sweepMidHz = 1.1f; // средняя (период ~0.9 с)
+        float sweepMidDepth = 700.0f;
+        float sweepFastHz = 4.5f; // быстрая (период ~0.2 с)
+        float sweepFastDepth = 250.0f;
+
+        // --- Свист: огибающая ---
+        float ampBase = 0.7f;
+        float ampDepth = 0.25f;
+        float ampRateHz = 0.8f;
+
+        // --- Свист: паузы ---
+        int pauseCount = 3; // сколько пауз за файл
+        float pauseMinMs = 80.0f;
+        float pauseMaxMs = 180.0f;
+        float pauseEdgeMs = 20.0f; // плавный вход/выход паузы
+
+        // --- Шум моря (тихий, с наклоном в НЧ) ---
+        float seaNoiseLevel = 0.012f;
+        float seaNoiseAmDepth = 0.4f;
+        float seaNoiseAmHz = 0.15f;
+
+        // --- Стрёкот: редкие одиночные ВЧ-вспышки ---
+        float crackleLevel = 0.25f;
+        float crackleRateHz = 3.0f;
+        float crackleDurMinMs = 1.0f;
+        float crackleDurMaxMs = 3.0f;
+        float crackleFreqMin = 8000.0f;
+        float crackleFreqMax = 14000.0f;
+
+        uint32_t seed = 77777;
+    };
+
+    class DolphinWhistleTest
+    {
+    public:
+        explicit DolphinWhistleTest(const DolphinWhistleTestParams& p = {});
+        void setParams(const DolphinWhistleTestParams& p);
+        const DolphinWhistleTestParams& params() const { return p_; }
+        void generate(float* out, int numSamples);
+
+    private:
+        DolphinWhistleTestParams p_;
+        std::mt19937 rng_;
+        std::normal_distribution<float> gauss_{0.0f, 1.0f};
+
+        // Единый непрерывный свист с ЧМ-траекторией.
+        void renderWhistle(std::vector<float>& buffer, int numSamples);
+
+        // Тихий шум моря.
+        void renderSeaNoise(std::vector<float>& buffer, int numSamples);
+
+        // Редкие одиночные ВЧ-вспышки.
+        void renderCrackle(std::vector<float>& buffer, int numSamples);
+    };
+} // namespace hydro
+
+
+
+
+
+// files\hydroacoustic\simulator\core\ocean_noise.cpp
+#include "ocean_noise.h"
+#include "math_constants.h"
+#include <cmath>
+#include <algorithm>
+
+namespace hydro
+{
+    // ============================================================
+    //  Вспомогательные: фильтры и огибающие.
+    // ============================================================
+    namespace
+    {
+        // ------------------------------------------------------------
+        //  State Variable Filter (Chamberlin). Стабильнее biquad
+        //  на краях диапазона, даёт сразу LP/BP/HP выходы.
+        //
+        //  f  = 2*sin(pi * fc / fs) — нормированная частота
+        //  q  = 1/Q                — затухание
+        //
+        //  Коэффициенты пересчитываются при set().
+        // ------------------------------------------------------------
+        struct SVF
+        {
+            float f = 0.1f;
+            float q = 1.0f;
+            float lp = 0.0f;
+            float bp = 0.0f;
+
+            void set(float fs, float fc, float Q)
+            {
+                if (fc < 5.0f) fc = 5.0f;
+                if (fc > fs * 0.45f) fc = fs * 0.45f;
+                if (Q < 0.5f) Q = 0.5f;
+                if (Q > 4.0f) Q = 4.0f;
+
+                f = 2.0f * std::sin(PI_F * fc / fs);
+                if (f > 1.0f) f = 1.0f;
+                q = 1.0f / Q;
+            }
+
+            float processBP(float x)
+            {
+                const float hp = x - lp - q * bp;
+                bp += f * hp;
+                lp += f * bp;
+
+                if (!std::isfinite(bp) || std::fabs(bp) > 1e6f)
+                {
+                    bp = 0.0f;
+                    lp = 0.0f;
+                }
+                if (!std::isfinite(lp) || std::fabs(lp) > 1e6f)
+                {
+                    lp = 0.0f;
+                }
+
+                return bp;
+            }
+
+            void reset()
+            {
+                lp = 0.0f;
+                bp = 0.0f;
+            }
+        };
+
+        // ------------------------------------------------------------
+        //  Огибающая: attack + exponential decay.
+        //
+        //  t       — время с начала события (сек)
+        //  tAttack — длительность нарастания
+        //  tDecay  — характерное время спада (1/e)
+        //
+        //  Возвращает 0 за пределами [0, tAttack + 5*tDecay].
+        // ------------------------------------------------------------
+        inline float envelope(float t, float tAttack, float tDecay)
+        {
+            if (t < 0.0f) return 0.0f;
+            const float tEnd = tAttack + 5.0f * tDecay;
+            if (t > tEnd) return 0.0f;
+
+            if (t < tAttack)
+            {
+                // Плавное нарастание — половина косинуса (без излома).
+                return 0.5f * (1.0f - std::cos(PI_F * t / tAttack));
+            }
+            const float u = (t - tAttack) / tDecay;
+            return std::exp(-u);
+        }
+
+        // ------------------------------------------------------------
+        //  Один слой: полосовой шум × огибающая, СРАЗУ по 8 каналам.
+        //
+        //  Для каждого канала — свой белый шум, свой SVF, своя задержка.
+        //  Это даёт настоящий пространственный эффект: каналы
+        //  некоррелированы, но огибающая общая (одна волна).
+        // ------------------------------------------------------------
+        // ------------------------------------------------------------
+        //  Один слой: полосовой шум × огибающая, СРАЗУ по 8 каналам.
+        //
+        //  Ключевые механизмы стерео:
+        //   1. Общий band — «скелет» волны, один на все каналы.
+        //   2. Направленность g(θ, φ_ch) = 0.5 + 0.5*cos(θ - φ_ch):
+        //      ближний к азимуту канал громче, дальний — тише.
+        //      При θ(t) амплитуда «перетекает» между каналами.
+        //   3. Субдискретная задержка: линейная интерполяция band.
+        //   4. Малый независимый шум приёмника на каждый канал.
+        // ------------------------------------------------------------
+        void renderLayer(std::array<std::vector<float>, NUM_CHANNELS>& out,
+                         int numSamples,
+                         float fs,
+                         const OceanNoise::Wave& w,
+                         const UcaGeometry& uca,
+                         float soundSpeed,
+                         float fLow, float fHigh,
+                         float tAttack, float tDecay,
+                         float tDelay,
+                         float amp,
+                         std::mt19937& rng)
+        {
+            if (w.lengthSamples <= 0) return;
+
+            const float fc = std::sqrt(fLow * fHigh);
+            const float bw = (fHigh - fLow);
+            const float Q = (bw > 1.0f) ? (fc / bw) : 1.0f;
+            const float invFs = 1.0f / fs;
+            const int delaySamples = static_cast<int>(tDelay * fs);
+
+            std::normal_distribution<float> gauss(0.0f, 1.0f);
+
+            // SVF для общего band.
+            SVF svfMain;
+            svfMain.set(fs, fc, Q);
+
+            // SVF для шума приёмника — по одному на канал.
+            SVF svfNoise[NUM_CHANNELS];
+            for (int ch = 0; ch < NUM_CHANNELS; ++ch)
+                svfNoise[ch].set(fs, fc, Q);
+
+            const bool spatial = (w.azimuthDeg >= 0.0f);
+            const float az0 = w.azimuthDeg;
+            const float invC = 1.0f / soundSpeed;
+
+            // φ каналов.
+            float phi[NUM_CHANNELS];
+            for (int ch = 0; ch < NUM_CHANNELS; ++ch)
+                phi[ch] = TWO_PI_F * ch / NUM_CHANNELS;
+
+            // Кольцевой буфер последних значений band для интерполяции.
+            // Размер — с запасом: макс. задержка = 2R/c * fs < 10 отсч.
+            constexpr int HIST = 32;
+            float bandHist[HIST] = {0.0f};
+            int histPos = 0;
+
+            constexpr float RECEIVER_NOISE_MIX = 0.20f;
+
+            for (int k = 0; k < w.lengthSamples; ++k)
+            {
+                const int idx = w.sampleIndex + k;
+                if (idx < 0 || idx >= numSamples) continue;
+
+                const float tEnv = static_cast<float>(k - delaySamples) * invFs;
+                const float env = envelope(tEnv, tAttack, tDecay);
+
+                // --- Общий band (генерируем всегда, даже если env=0) ---
+                const float white = gauss(rng);
+                const float band = svfMain.processBP(white);
+
+                // Пишем в кольцевой буфер.
+                bandHist[histPos] = band;
+                histPos = (histPos + 1) % HIST;
+
+                // Прогрев шума приёмника (нужен всегда, чтобы не было щелчка).
+                float noiseBand[NUM_CHANNELS];
+                for (int ch = 0; ch < NUM_CHANNELS; ++ch)
+                {
+                    const float wn = gauss(rng);
+                    noiseBand[ch] = svfNoise[ch].processBP(wn);
+                }
+
+                if (env <= 0.0f) continue;
+
+                const float tLocal = static_cast<float>(k) * invFs;
+
+                if (spatial)
+                {
+                    // θ(t) — плавающий азимут.
+                    const float azNow = az0 + w.azSweepDeg *
+                        std::sin(TWO_PI_F * w.azSweepHz * tLocal + w.azSweepPhase);
+                    const float theta = deg2rad(azNow);
+
+                    for (int ch = 0; ch < NUM_CHANNELS; ++ch)
+                    {
+                        // --- Направленность: ближний к θ канал громче ---
+                        // g = 0.5 + 0.5*cos(θ - φ_ch) ∈ [0, 1]
+                        const float gDir = 0.5f + 0.5f *
+                            std::cos(theta - phi[ch]);
+
+                        // --- Субдискретная задержка ---
+                        // Сколько отсчётов назад «смотрит» этот канал.
+                        const float dS = (-uca.radius() *
+                            std::cos(theta - phi[ch]) * invC) * fs;
+
+                        // Задержка — обычно маленькая (0..10 отсч.),
+                        // может быть отрицательной (опережение).
+                        // Разложим на целую и дробную часть.
+                        int dInt = static_cast<int>(std::floor(dS));
+                        float dFrac = dS - static_cast<float>(dInt);
+
+                        // Ограничиваем, чтобы не выйти за HIST.
+                        if (dInt > HIST - 2) dInt = HIST - 2;
+                        if (dInt < -1) dInt = -1;
+
+                        // Смотрим в кольцевой буфер назад на dInt отсчётов.
+                        // histPos указывает на «следующую свободную» ячейку,
+                        // значит последний записанный — (histPos-1+HIST)%HIST.
+                        auto histAt = [&](int back) -> float
+                        {
+                            // back >= 0 — назад на back отсчётов от последнего.
+                            int p = (histPos - 1 - back + 2 * HIST) % HIST;
+                            return bandHist[p];
+                        };
+
+                        // band с задержкой dS = (1 - dFrac) * band[dInt] +
+                        //                        dFrac * band[dInt + 1]
+                        // где band[dInt] — это signal на dInt отсчётов назад.
+                        const float b0 = histAt(dInt < 0 ? 0 : dInt);
+                        const float b1 = histAt(dInt < 0 ? 0 : dInt + 1);
+                        const float delayed = (1.0f - dFrac) * b0 +
+                            dFrac * b1;
+
+                        // Пишем: направленность × задержанный сигнал
+                        //       + малый шум приёмника.
+                        const float main = delayed * gDir * (1.0f - RECEIVER_NOISE_MIX);
+                        const float noise = noiseBand[ch] * RECEIVER_NOISE_MIX;
+                        out[ch][idx] += amp * env * (main + noise);
+                    }
+                }
+                else
+                {
+                    // Без азимута: общий band + шум приёмника в каждый канал.
+                    for (int ch = 0; ch < NUM_CHANNELS; ++ch)
+                    {
+                        const float main = band * (1.0f - RECEIVER_NOISE_MIX);
+                        const float noise = noiseBand[ch] * RECEIVER_NOISE_MIX;
+                        out[ch][idx] += amp * env * (main + noise);
+                    }
+                }
+            }
+        }
+    } // namespace
+
+    // ------------------------------------------------------------
+
+    OceanNoise::OceanNoise(const OceanNoiseParams& p) : p_(p)
+    {
+    }
+
+    // ============================================================
+    //  Фоновый шум: три слоя (rumble/mid/hiss) — как было.
+    // ============================================================
+    void OceanNoise::generateBackgroundChannel(std::vector<float>& outChannel,
+                                               int numSamples,
+                                               float /*fs*/,
+                                               uint32_t channelSeed)
+    {
+        outChannel.assign(numSamples, 0.0f);
+        if (p_.rumbleWeight <= 0.0f && p_.midWeight <= 0.0f && p_.hissWeight <= 0.0f)
+            return;
+
+        std::mt19937 rng(channelSeed);
+        std::normal_distribution<float> gauss(0.0f, 1.0f);
+        float rS = 0.0f, mS = 0.0f, hS = 0.0f;
+        const float wR = p_.rumbleWeight, wM = p_.midWeight, wH = p_.hissWeight;
+        const float norm = 1.0f / std::sqrt(wR * wR + wM * wM + wH * wH + 1e-6f);
+
+        for (int n = 0; n < numSamples; ++n)
+        {
+            const float white = gauss(rng);
+
+            // Однополюсные ФНЧ (как было).
+            rS = p_.rumbleSlope * rS + (1.0f - p_.rumbleSlope) * white;
+            mS = p_.midSlope * mS + (1.0f - p_.midSlope) * white;
+            hS = p_.hissSlope * hS + (1.0f - p_.hissSlope) * white;
+
+            const float gR = 1.0f / std::sqrt(1.0f - p_.rumbleSlope * p_.rumbleSlope + 1e-6f);
+            const float gM = 1.0f / std::sqrt(1.0f - p_.midSlope * p_.midSlope + 1e-6f);
+            const float gH = 1.0f / std::sqrt(1.0f - p_.hissSlope * p_.hissSlope + 1e-6f);
+
+            const float r = rS * gR * wR;
+            const float m = mS * gM * wM;
+            const float h = hS * gH * wH;
+            outChannel[n] = (r + m + h) * norm * p_.level;
+        }
+    }
+
+    // ============================================================
+    //  Всплески — БЕЗ ИЗМЕНЕНИЙ.
+    // ============================================================
+    void OceanNoise::renderSpike(std::vector<float>& buffer,
+                                 int numSamples,
+                                 float fs,
+                                 int startSample,
+                                 const OceanNoise::Spike& s,
+                                 std::mt19937& rng)
+    {
+        std::normal_distribution<float> gauss(0.0f, 1.0f);
+        const float tau = std::max(1e-4f, s.tauSec);
+        const int len = std::min(numSamples - startSample,
+                                 static_cast<int>(5.0f * tau * fs) + 1);
+
+        for (int k = 0; k < len; ++k)
+        {
+            const float t = static_cast<float>(k) / fs;
+            const float env = std::exp(-(t / tau) * (t / tau));
+            float sig = 0.0f;
+            if (s.type == 1)
+            {
+                const float T = 3.0f * tau;
+                const float u = std::min(1.0f, t / T);
+                const float f = s.f0 + (s.f1 - s.f0) * u;
+                sig = std::sin(TWO_PI_F * f * t + s.phase);
+            }
+            else
+            {
+                sig = gauss(rng);
+            }
+            buffer[startSample + k] += s.amplitude * env * sig;
+        }
+    }
+
+    // ============================================================
+    //  Волна: 4 слоя полосового шума с индивидуальными огибающими.
+    //
+    //  Это — ключевая замена. Было: 4 синуса × Hann.
+    //  Стало: 4 полосовых шумовых слоя, у каждого attack/decay
+    //         и сдвиг по времени (пена и шелест запаздывают).
+    // ============================================================
+    void OceanNoise::renderWave(std::array<std::vector<float>, NUM_CHANNELS>& out,
+                                int numSamples,
+                                float fs,
+                                const OceanNoise::Wave& w,
+                                const OceanNoiseParams& p,
+                                const UcaGeometry& uca,
+                                float soundSpeed,
+                                std::mt19937& rng)
+    {
+        if (w.lengthSamples <= 0) return;
+
+        const float A = w.amplitude;
+
+        renderLayer(out, numSamples, fs, w, uca, soundSpeed,
+                    p.rumbleLow, p.rumbleHigh,
+                    p.rumbleAttack, p.rumbleDecay,
+                    0.0f, A * p.rumbleMix, rng);
+
+        renderLayer(out, numSamples, fs, w, uca, soundSpeed,
+                    p.bodyLow, p.bodyHigh,
+                    p.bodyAttack, p.bodyDecay,
+                    0.0f, A * p.bodyMix, rng);
+
+        renderLayer(out, numSamples, fs, w, uca, soundSpeed,
+                    p.foamLow, p.foamHigh,
+                    p.foamAttack, p.foamDecay,
+                    p.foamDelay, A * p.foamMix, rng);
+
+        renderLayer(out, numSamples, fs, w, uca, soundSpeed,
+                    p.hissLow, p.hissHigh,
+                    p.hissAttack, p.hissDecay,
+                    p.hissDelay, A * p.hissMix, rng);
+    }
+
+    // ============================================================
+    //  Генерация спайков — БЕЗ ИЗМЕНЕНИЙ.
+    // ============================================================
+    std::vector<OceanNoise::Spike>
+    OceanNoise::generateSpikes(int numSamples, float fs, uint32_t seed)
+    {
+        std::vector<Spike> spikes;
+        if (p_.spikeRate <= 0.0f || p_.spikeAmp <= 0.0f) return spikes;
+
+        std::mt19937 rng(seed);
+        std::uniform_real_distribution<float> uniform01(0.0f, 1.0f);
+        std::uniform_real_distribution<float> azDist(0.0f, 359.9f);
+        std::uniform_real_distribution<float> ampJitter(0.6f, 1.4f);
+        std::uniform_real_distribution<float> phaseDist(0.0f, TWO_PI_F);
+        std::uniform_int_distribution<int> typeDist(0, 2);
+
+        const float durationSec = static_cast<float>(numSamples) / fs;
+        std::exponential_distribution<float> expDist(p_.spikeRate);
+
+        float t = 0.0f;
+        while (t < durationSec)
+        {
+            t += expDist(rng);
+            if (t >= durationSec) break;
+
+            Spike s;
+            s.sampleIndex = static_cast<int>(t * fs);
+            s.azimuthDeg = (uniform01(rng) < p_.spikeSpatialFrac) ? azDist(rng) : -1.0f;
+            s.type = typeDist(rng);
+            s.amplitude = p_.spikeAmp * ampJitter(rng);
+            s.phase = phaseDist(rng);
+
+            if (s.type == 0)
+            {
+                s.tauSec = (p_.dropTauMinMs + uniform01(rng) *
+                    (p_.dropTauMaxMs - p_.dropTauMinMs)) * 0.001f;
+                s.f0 = s.f1 = 0.0f;
+            }
+            else if (s.type == 1)
+            {
+                s.tauSec = (p_.bubbleTauMinMs + uniform01(rng) *
+                    (p_.bubbleTauMaxMs - p_.bubbleTauMinMs)) * 0.001f;
+                s.f0 = p_.bubbleFreqStartMin + uniform01(rng) *
+                    (p_.bubbleFreqStartMax - p_.bubbleFreqStartMin);
+                s.f1 = p_.bubbleFreqEndMin + uniform01(rng) *
+                    (p_.bubbleFreqEndMax - p_.bubbleFreqEndMin);
+            }
+            else
+            {
+                s.tauSec = (p_.clickTauMinMs + uniform01(rng) *
+                    (p_.clickTauMaxMs - p_.clickTauMinMs)) * 0.001f;
+                s.f0 = s.f1 = 0.0f;
+            }
+            spikes.push_back(s);
+        }
+        return spikes;
+    }
+
+    // ============================================================
+    //  Генерация волн: регулярный поток с джиттером.
+    //
+    //  Было: exponential_distribution(waveRate) — интервалы
+    //        экспоненциальные, первая волна может уехать далеко.
+    //
+    //  Стало: средний период = 1/waveRate, ±40% джиттера,
+    //         первая волна в t=0.
+    // ============================================================
+    std::vector<OceanNoise::Wave>
+    OceanNoise::generateWaves(int numSamples, float fs, uint32_t seed)
+    {
+        std::vector<Wave> waves;
+        if (p_.waveRate <= 0.0f || p_.waveAmp <= 0.0f) return waves;
+
+        std::mt19937 rng(seed);
+        std::uniform_real_distribution<float> uniform01(0.0f, 1.0f);
+        std::uniform_real_distribution<float> azDist(0.0f, 359.9f);
+        std::uniform_real_distribution<float> phaseDist(0.0f, TWO_PI_F);
+        std::uniform_real_distribution<float> ampJitter(0.7f, 1.3f);
+
+        const float durationSec = static_cast<float>(numSamples) / fs;
+        const float meanPeriod = 1.0f / p_.waveRate;
+        const float jitterRange = 0.4f * meanPeriod;
+        std::uniform_real_distribution<float> jitterDist(-jitterRange, +jitterRange);
+
+        // Первая волна — ровно в t=0.
+        float t = 0.0f;
+        while (t < durationSec)
+        {
+            Wave w;
+            w.sampleIndex = static_cast<int>(t * fs);
+            if (w.sampleIndex >= numSamples) break;
+
+            // Длительность волны — из диапазона.
+            const float durSec = p_.waveDurationMinS + uniform01(rng) *
+                (p_.waveDurationMaxS - p_.waveDurationMinS);
+            w.lengthSamples = static_cast<int>(durSec * fs);
+
+            // Обрезаем по концу буфера.
+            if (w.sampleIndex + w.lengthSamples > numSamples)
+            {
+                w.lengthSamples = numSamples - w.sampleIndex;
+            }
+            if (w.lengthSamples <= 0) break;
+
+            w.azimuthDeg = (uniform01(rng) < p_.waveSpatialFrac) ? azDist(rng) : -1.0f;
+            w.amplitude = p_.waveAmp * ampJitter(rng);
+
+            // --- θ-модуляция: азимут «плывёт» внутри волны ---
+            // Размах качания — 30..60 градусов, случайно на каждую волну.
+            w.azSweepDeg = 30.0f + uniform01(rng) * 30.0f;
+            // Частота качания — 0.1..0.25 Гц (период 4..10 секунд).
+            w.azSweepHz = 0.10f + uniform01(rng) * 0.15f;
+            // Начальная фаза качания — случайна.
+            w.azSweepPhase = phaseDist(rng);
+
+            waves.push_back(w);
+
+            // Следующая волна — через meanPeriod ± джиттер.
+            t += meanPeriod + jitterDist(rng);
+            if (t < 0.0f) t = 0.0f; // защита от ухода в минус
+        }
+        return waves;
+    }
+
+    // ============================================================
+    //  Модуляция — БЕЗ ИЗМЕНЕНИЙ (выключена).
+    // ============================================================
+    std::vector<float> OceanNoise::generateModulation(int numSamples,
+                                                      float /*fs*/,
+                                                      uint32_t /*seed*/)
+    {
+        return std::vector<float>(numSamples, 1.0f);
+    }
+
+    // ============================================================
+    //  addTo — БЕЗ ИЗМЕНЕНИЙ в логике, но вызываем новый renderWave.
+    // ============================================================
+    void OceanNoise::addTo(std::array<std::vector<float>, NUM_CHANNELS>& out,
+                           int numSamples,
+                           float fs,
+                           const UcaGeometry& uca,
+                           float soundSpeed)
+    {
+        // ---- 2. Всплески + эхо ----
+        std::vector<Spike> spikes = generateSpikes(numSamples, fs, p_.seed + 7u);
+
+        std::mt19937 rngRender(p_.seed + 21u);
+        std::mt19937 rngEcho(p_.seed + 99u);
+        std::uniform_real_distribution<float> echoDelayDist(p_.echoDelayMinMs, p_.echoDelayMaxMs);
+        std::uniform_real_distribution<float> echoGainDist(p_.echoGainMin, p_.echoGainMax);
+        std::uniform_real_distribution<float> echoAzSign(-1.0f, 1.0f);
+        std::uniform_real_distribution<float> echoAzMag(10.0f, p_.echoAzSpreadDeg);
+
+        for (const auto& s : spikes)
+        {
+            std::vector<float> mono(numSamples, 0.0f);
+            renderSpike(mono, numSamples, fs, s.sampleIndex, s, rngRender);
+
+            if (s.azimuthDeg >= 0.0f)
+            {
+                const auto dt = uca.arrivalOffsets(s.azimuthDeg, soundSpeed);
+                for (int ch = 0; ch < NUM_CHANNELS; ++ch)
+                {
+                    const float dS = dt[ch] * fs;
+                    for (int n = 0; n < numSamples; ++n)
+                    {
+                        const float src = static_cast<float>(n) - dS;
+                        if (src >= 0.0f && src < static_cast<float>(numSamples - 1))
+                        {
+                            const int i0 = static_cast<int>(src);
+                            const float fr = src - static_cast<float>(i0);
+                            out[ch][n] += mono[i0] + fr * (mono[i0 + 1] - mono[i0]);
+                        }
+                    }
+                }
+            }
+            else
+            {
+                const float perCh = 1.0f / NUM_CHANNELS;
+                for (int ch = 0; ch < NUM_CHANNELS; ++ch)
+                    for (int n = 0; n < numSamples; ++n) out[ch][n] += mono[n] * perCh;
+            }
+
+            if (p_.echoCount <= 0 || s.azimuthDeg < 0.0f) continue;
+            for (int e = 0; e < p_.echoCount; ++e)
+            {
+                const int delayS = static_cast<int>(echoDelayDist(rngEcho) * 0.001f * fs);
+                const int echoStart = s.sampleIndex + delayS;
+                if (echoStart >= numSamples) continue;
+
+                const float sign = (echoAzSign(rngEcho) >= 0.0f) ? 1.0f : -1.0f;
+                float echoAz = s.azimuthDeg + sign * echoAzMag(rngEcho);
+                while (echoAz < 0.0f) echoAz += 360.0f;
+                while (echoAz >= 360.0f) echoAz -= 360.0f;
+                const float echoGain = echoGainDist(rngEcho);
+
+                Spike echo = s;
+                echo.amplitude *= echoGain;
+
+                std::vector<float> echoMono(numSamples, 0.0f);
+                renderSpike(echoMono, numSamples, fs, echoStart, echo, rngRender);
+
+                const auto dt = uca.arrivalOffsets(echoAz, soundSpeed);
+                for (int ch = 0; ch < NUM_CHANNELS; ++ch)
+                {
+                    const float dch = dt[ch] * fs;
+                    for (int n = 0; n < numSamples; ++n)
+                    {
+                        const float src = static_cast<float>(n) - dch;
+                        if (src >= 0.0f && src < static_cast<float>(numSamples - 1))
+                        {
+                            const int i0 = static_cast<int>(src);
+                            const float fr = src - static_cast<float>(i0);
+                            out[ch][n] += echoMono[i0] + fr * (echoMono[i0 + 1] - echoMono[i0]);
+                        }
+                    }
+                }
+            }
+        }
+
+        // ---- 3. Волны ----
+        std::vector<Wave> waves = generateWaves(numSamples, fs, p_.seed + 31u);
+        std::mt19937 rngWave(p_.seed + 41u);
+
+        // Огибающую волн считаем в ОТДЕЛЬНОМ буфере, а не из out.
+        // Причина: в out уже могут быть спайки (блок 2) — они испортят
+        // огибающую, и модуляция фона будет работать неправильно.
+        std::vector<float> waveEnvelope(numSamples, 0.0f);
+
+        // Отдельный временный буфер для каждой волны.
+        std::array<std::vector<float>, NUM_CHANNELS> waveBuf;
+
+        for (const auto& w : waves)
+        {
+            // Обнуляем временный буфер.
+            for (int ch = 0; ch < NUM_CHANNELS; ++ch)
+                waveBuf[ch].assign(numSamples, 0.0f);
+
+            // Рисуем волну во временный буфер.
+            renderWave(waveBuf, numSamples, fs, w, p_, uca, soundSpeed, rngWave);
+
+            // Суммируем во временный буфер → в out.
+            // И параллельно накапливаем огибающую.
+            for (int n = 0; n < numSamples; ++n)
+            {
+                float s = 0.0f;
+                for (int ch = 0; ch < NUM_CHANNELS; ++ch)
+                {
+                    const float v = waveBuf[ch][n];
+                    out[ch][n] += v;
+                    s += v * v;
+                }
+                waveEnvelope[n] += std::sqrt(s / NUM_CHANNELS);
+            }
+        }
+
+        // ---- 3b. Фон, модулированный огибающей волн ----
+        // Сглаживаем огибающую, чтобы не было резких скачков.
+        // Однополюсный ФНЧ с медленной постоянной.
+        {
+            const float smoothCoef = 0.9995f;
+            float smoothState = 0.0f;
+            for (int n = 0; n < numSamples; ++n)
+            {
+                smoothState = smoothCoef * smoothState +
+                    (1.0f - smoothCoef) * waveEnvelope[n];
+                waveEnvelope[n] = smoothState;
+            }
+
+            // Нормируем огибающую в диапазон [0, 1].
+            float maxEnv = 0.0f;
+            for (int n = 0; n < numSamples; ++n)
+                if (waveEnvelope[n] > maxEnv) maxEnv = waveEnvelope[n];
+            if (maxEnv > 1e-6f)
+                for (int n = 0; n < numSamples; ++n)
+                    waveEnvelope[n] /= maxEnv;
+            else
+                std::fill(waveEnvelope.begin(), waveEnvelope.end(), 1.0f);
+
+            // Теперь фон: базовый уровень × (1 - modulation + modulation*env).
+            // modulation = 0 → фон ровный (множитель = 1).
+            // modulation = 1 → фон строго следует за огибающей.
+            const float m = std::clamp(p_.bgModulation, 0.0f, 1.0f);
+
+            for (int ch = 0; ch < NUM_CHANNELS; ++ch)
+            {
+                std::vector<float> bg;
+                generateBackgroundChannel(bg, numSamples, fs, p_.seed + 101u * (ch + 1));
+                for (int n = 0; n < numSamples; ++n)
+                {
+                    const float env = waveEnvelope[n];
+                    const float gain = (1.0f - m) + m * env;
+                    out[ch][n] += bg[n] * gain;
+                }
+            }
+        }
+
+        // ---- 4. Модуляция (выключена) ----
+        std::vector<float> mod = generateModulation(numSamples, fs, p_.seed + 13u);
+        for (int ch = 0; ch < NUM_CHANNELS; ++ch)
+            for (int n = 0; n < numSamples; ++n) out[ch][n] *= mod[n];
+
+        // ---- 5. Санитайзер: NaN и inf → 0 ----
+        for (int ch = 0; ch < NUM_CHANNELS; ++ch)
+        {
+            for (int n = 0; n < numSamples; ++n)
+            {
+                if (!std::isfinite(out[ch][n]))
+                {
+                    out[ch][n] = 0.0f;
+                }
+            }
+        }
+    }
+} // namespace hydro
+
+
+
+
+
+// files\hydroacoustic\simulator\core\ocean_noise.h
+#pragma once
+#include "types.h"
+#include "uca_geometry.h"
+#include <array>
+#include <cstdint>
+#include <random>
+#include <vector>
+
+namespace hydro
+{
+    // ============================================================
+    //  OceanNoiseParams — параметры шума океана.
+    //
+    //  ЭТАП 1: всплески + эхо + волны. Фон (rumble/mid/hiss) выключен.
+    //  Модуляция выключена.
+    //
+    //  Три слоя:
+    //    1. Всплески (spikes) — капли, пузырьки, щелчки. Короткие.
+    //       Идят через propagation, с эхом.
+    //    2. Волны (waves) — протяжные низкочастотные накаты, 1–3 сек.
+    //       Каждая — со своим азимутом.
+    //    3. Фон — пока выключен.
+    // ============================================================
+
+    struct OceanNoiseParams
+    {
+        // --- Общий уровень ---
+        float level = 0.5f;
+
+        // Насколько фон модулируется волнами (0 = ровный, 1 = сильно дышит).
+        float bgModulation = 0.7f;
+
+        // --- Фон (выключен) ---
+        float rumbleWeight = 0.0f;
+        float midWeight = 0.0f;
+        float hissWeight = 0.0f;
+        float rumbleSlope = 0.97f;
+        float midSlope = 0.65f;
+        float hissSlope = 0.25f;
+
+        // ============================================================
+        //  СПАЙКИ (короткие всплески)
+        // ============================================================
+        float spikeRate = 3.0f;
+        float spikeAmp = 0.5f;
+        float spikeSpatialFrac = 0.9f;
+
+        // Тип 0 — «капля».
+        float dropTauMinMs = 8.0f;
+        float dropTauMaxMs = 20.0f;
+
+        // Тип 1 — «пузырёк».
+        float bubbleTauMinMs = 40.0f;
+        float bubbleTauMaxMs = 90.0f;
+        float bubbleFreqStartMin = 500.0f;
+        float bubbleFreqStartMax = 1200.0f;
+        float bubbleFreqEndMin = 150.0f;
+        float bubbleFreqEndMax = 350.0f;
+
+        // Тип 2 — «щелчок».
+        float clickTauMinMs = 4.0f;
+        float clickTauMaxMs = 10.0f;
+
+        // Эхо.
+        int echoCount = 2;
+        float echoDelayMinMs = 80.0f;
+        float echoDelayMaxMs = 350.0f;
+        float echoGainMin = 0.40f;
+        float echoGainMax = 0.75f;
+        float echoAzSpreadDeg = 55.0f;
+
+        // ============================================================
+        //  ВОЛНЫ (длительные низкочастотные накаты)
+        // ============================================================
+        float waveRate = 0.5f; // волн в секунду (1 волна раз в 2 сек)
+        float waveAmp = 0.35f; // амплитуда
+        float waveDurationMinS = 1.0f; // длительность огибающей, сек
+        float waveDurationMaxS = 3.0f;
+        float waveSpatialFrac = 0.9f; // доля волн с азимутом
+
+
+        // ============================================================
+        //  СЛОИ ВОЛНЫ (для renderWave версии 2).
+        //  4 полосовых слоя шума, у каждого своя огибающая.
+        // ============================================================
+
+        // Частоты среза слоёв, Гц.
+        float rumbleLow = 20.0f;
+        float rumbleHigh = 200.0f;
+        float bodyLow = 200.0f;
+        float bodyHigh = 2000.0f;
+        float foamLow = 2000.0f;
+        float foamHigh = 4000.0f;
+        float hissLow = 4000.0f;
+        float hissHigh = 4900.0f;
+
+        // Времена нарастания, сек.
+        float rumbleAttack = 0.06f;
+        float bodyAttack = 0.08f;
+        float foamAttack = 0.025f;
+        float hissAttack = 0.015f;
+
+        // Времена спада (1/e), сек. — длиннее, чтобы волны перекрывались.
+        float rumbleDecay = 2.5f;
+        float bodyDecay = 1.8f;
+        float foamDecay = 0.9f;
+        float hissDecay = 0.6f;
+
+        // Задержки старта слоёв относительно начала волны, сек.
+        float foamDelay = 0.07f;
+        float hissDelay = 0.12f;
+
+        // Веса слоёв в миксе (1.0 = основной уровень).
+        float rumbleMix = 0.9f;
+        float bodyMix = 1.0f;
+        float foamMix = 0.7f;
+        float hissMix = 0.6f;
+
+
+        // ============================================================
+        //  МОДУЛЯЦИЯ (выключена)
+        // ============================================================
+        float modulationDepth = 0.0f;
+        float modulationHz = 0.15f;
+
+        // --- Seed ---
+        uint32_t seed = 777;
+    };
+
+    // ============================================================
+
+    class OceanNoise
+    {
+    public:
+        struct Spike
+        {
+            int sampleIndex = 0;
+            float azimuthDeg = -1.0f;
+            int type = 0;
+            float amplitude = 0.5f;
+            float tauSec = 0.005f;
+            float f0 = 800.0f;
+            float f1 = 200.0f;
+            float phase = 0.0f;
+        };
+
+        struct Wave
+        {
+            int sampleIndex = 0; // начало
+            int lengthSamples = 0; // длина
+            float azimuthDeg = -1.0f;
+            float amplitude = 0.35f;
+
+            // --- θ-модуляция: азимут «плывёт» внутри волны ---
+            float azSweepDeg = 0.0f;   // амплитуда качания, градусы
+            float azSweepHz = 0.15f;   // частота качания, Гц
+            float azSweepPhase = 0.0f; // начальная фаза качания
+        };
+
+        explicit OceanNoise(const OceanNoiseParams& p = {});
+
+        void setParams(const OceanNoiseParams& p) { p_ = p; }
+        const OceanNoiseParams& params() const { return p_; }
+
+        void addTo(std::array<std::vector<float>, NUM_CHANNELS>& out,
+                   int numSamples,
+                   float fs,
+                   const UcaGeometry& uca,
+                   float soundSpeed);
+
+    private:
+        OceanNoiseParams p_;
+
+        void generateBackgroundChannel(std::vector<float>& outChannel,
+                                       int numSamples,
+                                       float fs,
+                                       uint32_t channelSeed);
+
+        std::vector<Spike> generateSpikes(int numSamples, float fs, uint32_t seed);
+        std::vector<Wave> generateWaves(int numSamples, float fs, uint32_t seed);
+
+        std::vector<float> generateModulation(int numSamples, float fs, uint32_t seed);
+
+        void renderWave(std::array<std::vector<float>, NUM_CHANNELS>& out,
+                        int numSamples,
+                        float fs,
+                        const OceanNoise::Wave& w,
+                        const OceanNoiseParams& p,
+                        const UcaGeometry& uca,
+                        float soundSpeed,
+                        std::mt19937& rng);
+
+        void renderSpike(std::vector<float>& buffer,
+                         int numSamples,
+                         float fs,
+                         int startSample,
+                         const OceanNoise::Spike& s,
+                         std::mt19937& rng);
+    };
+} // namespace hydro
+
+
+
+
+
+// files\hydroacoustic\simulator\core\propagation.cpp
+#include "propagation.h"
+#include "math_constants.h"
+#include <cmath>
+#include <random>
+
+namespace hydro {
+
+// Линейная интерполяция: значение сигнала в точке t (дробный индекс).
+// idx может быть отрицательным или >= numSamples — возвращаем 0.
+static inline float sampleLinear(const std::vector<float>& x,
+                                 float idx,
+                                 int numSamples)
+{
+    if (idx < 0.0f || idx >= static_cast<float>(numSamples - 1)) {
+        // За границей — нули (сигнал вне окна)
+        return 0.0f;
+    }
+    const int i0 = static_cast<int>(idx);
+    const float frac = idx - static_cast<float>(i0);
+    const float s0 = x[i0];
+    const float s1 = x[i0 + 1];
+    return s0 + frac * (s1 - s0);
+}
+
+void Propagation::propagate(const std::vector<float>& monoSource,
+                            int numSamples,
+                            float fs,
+                            const UcaGeometry& uca,
+                            std::array<std::vector<float>, NUM_CHANNELS>& out)
+{
+    const int N = uca.numElements();
+    if (N != NUM_CHANNELS) {
+        // На всякий случай — наша UCA должна быть 8-элементной
+        // (в будущем можно будет обобщить).
+        return;
+    }
+
+    // 1. Задержки (генерационное соглашение — arrivalOffsets).
+    const auto dt = uca.arrivalOffsets(p_.azimuthDeg, p_.soundSpeed);
+
+    // 2. Уровень шума приёмника (относительно RMS сигнала).
+    float rmsSignal = 0.0f;
+    for (int i = 0; i < numSamples; ++i) {
+        rmsSignal += monoSource[i] * monoSource[i];
+    }
+    rmsSignal = std::sqrt(rmsSignal / std::max(1, numSamples));
+
+    float noiseRms = 0.0f;
+    if (p_.receiverSnrDb > 100.0f) {
+        noiseRms = 0.0f;
+    } else {
+        noiseRms = rmsSignal * std::pow(10.0f, -p_.receiverSnrDb / 20.0f);
+    }
+
+    // 3. Раскладка по каналам.
+    std::mt19937 rng(p_.noiseSeed);
+    std::normal_distribution<float> gauss(0.0f, 1.0f);
+
+    for (int ch = 0; ch < N; ++ch) {
+        out[ch].assign(numSamples, 0.0f);
+
+        // Задержка в отсчётах: dt[ch] секунд → dt[ch]*fs отсчётов.
+        const float delaySamples = dt[ch] * fs;
+
+        for (int n = 0; n < numSamples; ++n) {
+            // s_i(t_n) = s_source(t_n - dt_i)
+            //           = monoSource[n - delaySamples]
+            const float srcIdx = static_cast<float>(n) - delaySamples;
+            const float s = sampleLinear(monoSource, srcIdx, numSamples);
+
+            // Шум приёмника (независимый на каждом канале)
+            const float noise = gauss(rng) * noiseRms;
+
+            out[ch][n] = s + noise;
+        }
+    }
+}
+
+} // namespace hydro
+
+
+
+
+// files\hydroacoustic\simulator\core\propagation.h
+#pragma once
+#include "types.h"
+#include "uca_geometry.h"

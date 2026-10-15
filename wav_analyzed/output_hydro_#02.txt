@@ -1,0 +1,1389 @@
+//  Устойчивее biquad на краях диапазона, даёт одновременно
+//  LP / BP / HP выходы, прост в реализации, легко считается.
+//
+//  Нормированная частота:
+//      f = 2 * sin(pi * fc / fs)
+//  Затухание:
+//      q = 1 / Q
+//
+//  Коэффициенты задаются через set(). Один экземпляр = один
+//  фильтр, хранит своё состояние (lp, bp).
+//
+//  Используется:
+//    - в ocean_noise.cpp — для 4 полос волны и шума приёмника;
+//    - в source_model.cpp — для полосовой окраски кавитации
+//      и механического шума.
+//
+//  Границы:
+//    fc ∈ [5 Гц, 0.45 * fs]     (иначе клампится)
+//    Q  ∈ [0.5, 4.0]            (иначе клампится)
+//
+//  Защита от разбега: если bp или lp уходят за пределы float
+//  или становятся NaN/Inf — состояние сбрасывается в 0.
+// ============================================================
+
+namespace hydro
+{
+    struct Svf
+    {
+        float f  = 0.1f;    // нормированная частота
+        float q  = 1.0f;    // 1 / Q
+        float lp = 0.0f;    // состояние LP-выхода
+        float bp = 0.0f;    // состояние BP-выхода
+
+        // Настройка фильтра под fs, fc и Q.
+        void set(float fs, float fc, float Q)
+        {
+            if (fc < 5.0f)          fc = 5.0f;
+            if (fc > fs * 0.45f)    fc = fs * 0.45f;
+            if (Q  < 0.5f)          Q  = 0.5f;
+            if (Q  > 4.0f)          Q  = 4.0f;
+
+            f = 2.0f * std::sin(PI_F * fc / fs);
+            if (f > 1.0f) f = 1.0f;
+            q = 1.0f / Q;
+        }
+
+        // Прогон одного отсчёта. Возвращает BP-выход.
+        // LP и BP обновляются внутри.
+        float processBP(float x)
+        {
+            const float hp = x - lp - q * bp;
+            bp += f * hp;
+            lp += f * bp;
+
+            // Защита от разбега.
+            if (!std::isfinite(bp) || std::fabs(bp) > 1e6f)
+            {
+                bp = 0.0f;
+                lp = 0.0f;
+            }
+            if (!std::isfinite(lp) || std::fabs(lp) > 1e6f)
+            {
+                lp = 0.0f;
+            }
+
+            return bp;
+        }
+
+        // Сброс состояния (для повторного использования).
+        void reset()
+        {
+            lp = 0.0f;
+            bp = 0.0f;
+        }
+    };
+
+} // namespace hydro
+
+
+
+
+// files\hydroacoustic\common\types.h
+#pragma once
+#include <cstdint>
+#include <array>
+#include <string>
+#include <vector>
+
+// ============================================================
+//  Общие константы проекта hydroacoustic
+//  Всё, что НЕ зависит от GUI и НЕ зависит от LibTorch.
+// ============================================================
+
+namespace hydro
+{
+    // ---------- Решётка ----------
+    constexpr int NUM_CHANNELS = 8; // 8 гидрофонов (UCA)
+    constexpr float UCA_RADIUS_M = 0.5f; // радиус круговой решётки, м
+
+    // ---------- Дискретизация ----------
+    constexpr int SAMPLE_RATE = 22050; // Гц (Найквист 11025 Гц)
+    constexpr int FFT_SIZE = 2048; // для анализа
+    constexpr int FFT_SIZE_MIN = 256;
+    constexpr int FFT_SIZE_MAX = 8192;
+
+    // ---------- Физика среды ----------
+    constexpr float SOUND_SPEED_WATER = 1500.0f; // м/с
+    constexpr float SOUND_SPEED_AIR = 330.0f; // м/с
+
+    // ---------- Диапазоны сигнатур ----------
+    // Ниже — «разумные» границы для гидроакустики.
+    // Используются генераторами как пределы варьирования.
+    namespace band
+    {
+        constexpr float AUDIO_LOW_HZ = 10.0f;
+        constexpr float AUDIO_HIGH_HZ = 9000.0f; // < Найквиста (11025 Гц)
+        constexpr float BLADE_LOW_HZ = 2.0f; // лопастная частота — минимум
+        constexpr float BLADE_HIGH_HZ = 40.0f; // лопастная частота — максимум
+        constexpr float ENGINE_LOW_HZ = 5.0f;
+        constexpr float ENGINE_HIGH_HZ = 200.0f;
+    }
+
+    // ---------- Идентификаторы сред ----------
+    enum class Medium
+    {
+        Water = 0,
+        Air = 1,
+    };
+
+    inline float soundSpeed(Medium m)
+    {
+        return (m == Medium::Water) ? SOUND_SPEED_WATER : SOUND_SPEED_AIR;
+    }
+
+    // ---------- Идентификаторы ML-классов ----------
+    // ВАЖНО: это метки для обучения, а не C++-классы генераторов.
+    enum class SourceClass : int
+    {
+        Unknown = -1,
+        PropellerSub = 0, // винт подводной лодки
+        EngineSub = 1, // двигатель подводной лодки
+        OceanNoise = 2, // шум океана (нуль-класс / фон)
+        Dolphin = 3, // дельфин-афалина (Tursiops truncatus)
+        // --- следующие добавим позже ---
+        // SurfaceShip   = 4,
+        // Submersible   = 5,
+        // Whale         = 6,
+        // Orca          = 7,
+    };
+
+    inline const char* sourceClassName(SourceClass c)
+    {
+        switch (c)
+        {
+        case SourceClass::PropellerSub: return "PropellerSub";
+        case SourceClass::EngineSub: return "EngineSub";
+        case SourceClass::OceanNoise: return "OceanNoise";
+        case SourceClass::Dolphin: return "Dolphin";
+        default: return "Unknown";
+        }
+    }
+
+    // ---------- Общие структуры ----------
+    struct Azimuth
+    {
+        // Азимут храним в градусах 0..360, но внутри удобно в радианах.
+        float deg = 0.0f;
+    };
+} // namespace hydro
+
+
+
+
+
+// files\hydroacoustic\common\uca_geometry.cpp
+#include "uca_geometry.h"
+#include "math_constants.h"
+#include <cmath>
+
+namespace hydro {
+
+    UcaGeometry::UcaGeometry(int numElements, float radiusMeters)
+        : n_(numElements), R_(radiusMeters), phi_(numElements)
+    {
+        for (int i = 0; i < n_; ++i) {
+            phi_[i] = TWO_PI_F * i / n_;
+        }
+    }
+
+    float UcaGeometry::elementAngle(int i) const {
+        return phi_[i];
+    }
+
+    void UcaGeometry::elementPosition(int i, float& x, float& y) const {
+        x = R_ * std::cos(phi_[i]);
+        y = R_ * std::sin(phi_[i]);
+    }
+
+    std::vector<float> UcaGeometry::delays(float thetaDeg, float c) const {
+        std::vector<float> tau(n_);
+        const float theta = deg2rad(thetaDeg);
+        const float inv_c = 1.0f / c;
+        for (int i = 0; i < n_; ++i) {
+            tau[i] = R_ * std::cos(theta - phi_[i]) * inv_c;
+        }
+        return tau;
+    }
+
+    std::vector<float> UcaGeometry::arrivalOffsets(float thetaDeg, float c) const {
+        std::vector<float> dt(n_);
+        const float theta = deg2rad(thetaDeg);
+        const float inv_c = 1.0f / c;
+        for (int i = 0; i < n_; ++i) {
+            // МИНУС по сравнению с delays()
+            dt[i] = -R_ * std::cos(theta - phi_[i]) * inv_c;
+        }
+        return dt;
+    }
+
+    std::vector<std::complex<float>>
+    UcaGeometry::steeringVector(float freqHz, float thetaDeg, float c) const
+    {
+        std::vector<std::complex<float>> a(n_);
+        const auto tau = delays(thetaDeg, c);
+        const float w = TWO_PI_F * freqHz;
+        for (int i = 0; i < n_; ++i) {
+            const float phase = -w * tau[i];
+            a[i] = std::complex<float>(std::cos(phase), std::sin(phase));
+        }
+        return a;
+    }
+
+    int UcaGeometry::nearestElement(float thetaDeg) const {
+        const float theta = deg2rad(thetaDeg);
+        int best = 0;
+        float bestD = 1e9f;
+        for (int i = 0; i < n_; ++i) {
+            float d = std::fabs(theta - phi_[i]);
+            while (d > PI_F) d = std::fabs(d - TWO_PI_F);
+            if (d < bestD) { bestD = d; best = i; }
+        }
+        return best;
+    }
+
+} // namespace hydro
+
+
+
+
+// files\hydroacoustic\common\uca_geometry.h
+#pragma once
+#include "types.h"
+#include <array>
+#include <complex>
+#include <vector>
+
+namespace hydro {
+
+// ============================================================
+//  Геометрия круговой решётки (UCA) и steering vector.
+//
+//  Элементы расположены равномерно на окружности радиуса R
+//  в горизонтальной плоскости.
+//
+//  Углы элементов:
+//      phi_i = 2*pi*i / N,  i = 0..N-1
+//
+//  Направление прихода (азимут) отсчитывается от оси +X
+//  против часовой стрелки (стандартное соглашение).
+//
+//  ЗНАК ЗАДЕРЖКИ — ДВА РАЗНЫХ СОГЛАШЕНИЯ:
+//
+//  1) delays() — для BEAMFORMING (MUSIC/Capon/EV/DAS):
+//        tau_i = +R * cos(theta - phi_i) / c
+//     Положительное tau — сигнал приходит к элементу ПОЗЖЕ центра.
+//     Если источник в направлении theta, то элемент ch_i,
+//     ближайший к theta, получает tau с МАКСИМУМОМ (положительным),
+//     а противоположный — с минимумом (отрицательным).
+//     Steering vector a_i = exp(-j*2*pi*f*tau_i) КОМПЕНСИРУЕТ эту
+//     задержку. Используется в алгоритмах DOA.
+//
+//  2) arrivalOffsets() — для ГЕНЕРАЦИИ СИГНАЛА:
+//        dt_i = -R * cos(theta - phi_i) / c
+//     Физически: если источник в направлении theta, сигнал приходит
+//     к элементу, ближайшему к theta, РАНЬШЕ, чем к центру.
+//     Значит, dt_i для него ОТРИЦАТЕЛЬНО. Противоположный элемент
+//     получает ПОЛОЖИТЕЛЬНОЕ dt_i (позже).
+//     Так s_i(t) = s_source(t - dt_i) даёт корректные фазы.
+//
+//  ВАЖНО: не перепутать. Для генерации — arrivalOffsets(),
+//         для DOA — delays().
+// ============================================================
+
+class UcaGeometry {
+public:
+    UcaGeometry(int numElements = NUM_CHANNELS,
+                float radiusMeters = UCA_RADIUS_M);
+
+    int   numElements() const { return n_; }
+    float radius()      const { return R_; }
+
+    // Угол i-го элемента (радианы, 0..2*pi)
+    float elementAngle(int i) const;
+
+    // Позиция i-го элемента в декартовых координатах (x, y)
+    void  elementPosition(int i, float& x, float& y) const;
+
+    // === 1) BEAMFORMING-соглашение ===
+    //   tau_i = +R*cos(theta - phi_i) / c
+    // Используется в steering vector и DOA.
+    std::vector<float> delays(float thetaDeg, float c) const;
+
+    // Steering vector:
+    //   a_i = exp(-j * 2*pi*f * tau_i)
+    std::vector<std::complex<float>>
+        steeringVector(float freqHz, float thetaDeg, float c) const;
+
+    // === 2) ГЕНЕРАЦИЯ-соглашение ===
+    //   dt_i = -R*cos(theta - phi_i) / c
+    // Используется для задержки сигнала источника на i-м элементе:
+    //   s_i(t) = s_source(t - dt_i)
+    std::vector<float> arrivalOffsets(float thetaDeg, float c) const;
+
+    // Ближайший элемент к направлению thetaDeg (для визуализации/отладки)
+    int nearestElement(float thetaDeg) const;
+
+private:
+    int   n_;
+    float R_;
+    std::vector<float> phi_;   // углы элементов, радианы
+};
+
+} // namespace hydro
+
+
+
+
+// files\hydroacoustic\simulator\CMakeLists.txt
+# simulator
+add_executable(simulator
+        main.cpp
+        core/source_model.cpp
+        core/propagation.cpp
+        core/scene.cpp
+        core/ocean_noise.cpp
+        core/dolphin_whistle_test.cpp
+        dataset/generator.cpp
+)
+
+target_include_directories(simulator PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/core
+)
+
+target_link_libraries(simulator PRIVATE common)
+
+
+
+
+// files\hydroacoustic\simulator\main.cpp
+#include "types.h"
+#include "math_constants.h"
+#include "uca_geometry.h"
+#include "source_model.h"
+#include "scene.h"
+#include "dataset/generator.h"
+#include "params.h"
+#include "core/dolphin_whistle_test.h"
+
+#include <iostream>
+#include <iomanip>
+#include <array>
+#include <vector>
+#include <fstream>
+#include <cstdint>
+#include <string>
+#include <algorithm>
+#include <memory>
+#include <windows.h>
+
+using namespace hydro;
+
+// ------------------------------------------------------------
+//  WAV-писатель (для одиночных тестовых файлов).
+// ------------------------------------------------------------
+template <typename Channels>
+static bool writeWavFloat32(const std::string& path,
+                            const Channels& channels,
+                            int sampleRate)
+{
+    if (channels.empty()) return false;
+    const uint16_t numChannels = static_cast<uint16_t>(channels.size());
+    const size_t numSamples = channels[0].size();
+    for (const auto& ch : channels)
+    {
+        if (ch.size() != numSamples) return false;
+    }
+
+    std::ofstream f(path, std::ios::binary);
+    if (!f) return false;
+
+    const uint32_t dataBytes = static_cast<uint32_t>(numSamples * numChannels * 4);
+    const uint32_t fmtChunkSize = 16;
+    const uint16_t audioFormat = 3;
+    const uint16_t bitsPerSample = 32;
+    const uint32_t byteRate = sampleRate * numChannels * (bitsPerSample / 8);
+    const uint16_t blockAlign = numChannels * (bitsPerSample / 8);
+    const uint32_t riffSize = 4 + (8 + fmtChunkSize) + (8 + dataBytes);
+
+    auto writeU32 = [&](uint32_t v) { f.write(reinterpret_cast<const char*>(&v), 4); };
+    auto writeU16 = [&](uint16_t v) { f.write(reinterpret_cast<const char*>(&v), 2); };
+
+    f.write("RIFF", 4);
+    writeU32(riffSize);
+    f.write("WAVE", 4);
+    f.write("fmt ", 4);
+    writeU32(fmtChunkSize);
+    writeU16(audioFormat);
+    writeU16(numChannels);
+    writeU32(sampleRate);
+    writeU32(byteRate);
+    writeU16(blockAlign);
+    writeU16(bitsPerSample);
+    f.write("data", 4);
+    writeU32(dataBytes);
+
+    std::vector<float> frame(numChannels);
+    for (size_t s = 0; s < numSamples; ++s)
+    {
+        for (uint16_t c = 0; c < numChannels; ++c)
+        {
+            frame[c] = channels[c][s];
+        }
+        f.write(reinterpret_cast<const char*>(frame.data()), numChannels * 4);
+    }
+    return true;
+}
+
+// ------------------------------------------------------------
+//  WAV-писатель для МОНО (один канал).
+// ------------------------------------------------------------
+static bool writeMonoWavFloat32(const std::string& path,
+                                const std::vector<float>& samples,
+                                int sampleRate)
+{
+    if (samples.empty()) return false;
+
+    std::ofstream f(path, std::ios::binary);
+    if (!f) return false;
+
+    const uint16_t numChannels = 1;
+    const size_t numSamples = samples.size();
+    const uint32_t dataBytes = static_cast<uint32_t>(numSamples * 4);
+    const uint32_t fmtChunkSize = 16;
+    const uint16_t audioFormat = 3;
+    const uint16_t bitsPerSample = 32;
+    const uint32_t byteRate = sampleRate * numChannels * (bitsPerSample / 8);
+    const uint16_t blockAlign = numChannels * (bitsPerSample / 8);
+    const uint32_t riffSize = 4 + (8 + fmtChunkSize) + (8 + dataBytes);
+
+    auto writeU32 = [&](uint32_t v) { f.write(reinterpret_cast<const char*>(&v), 4); };
+    auto writeU16 = [&](uint16_t v) { f.write(reinterpret_cast<const char*>(&v), 2); };
+
+    f.write("RIFF", 4);
+    writeU32(riffSize);
+    f.write("WAVE", 4);
+    f.write("fmt ", 4);
+    writeU32(fmtChunkSize);
+    writeU16(audioFormat);
+    writeU16(numChannels);
+    writeU32(sampleRate);
+    writeU32(byteRate);
+    writeU16(blockAlign);
+    writeU16(bitsPerSample);
+    f.write("data", 4);
+    writeU32(dataBytes);
+
+    f.write(reinterpret_cast<const char*>(samples.data()), dataBytes);
+    return true;
+}
+
+// ------------------------------------------------------------
+//  Спектр (DFT) + ASCII-график.
+// ------------------------------------------------------------
+static std::vector<float> amplitudeSpectrum(const std::vector<float>& x)
+{
+    const int N = static_cast<int>(x.size());
+    const int half = N / 2;
+    std::vector<float> spec(half, 0.0f);
+    std::vector<float> w(N);
+    for (int i = 0; i < N; ++i)
+        w[i] = 0.5f * (1.0f - std::cos(TWO_PI_F * i / (N - 1)));
+
+    for (int k = 0; k < half; ++k)
+    {
+        float re = 0.0f, im = 0.0f;
+        const float wk = -TWO_PI_F * k / N;
+        for (int n = 0; n < N; ++n)
+        {
+            const float xn = x[n] * w[n];
+            const float ang = wk * n;
+            re += xn * std::cos(ang);
+            im += xn * std::sin(ang);
+        }
+        spec[k] = std::sqrt(re * re + im * im) / (N * 0.5f);
+    }
+    return spec;
+}
+
+static void printSpectrumAscii(const std::vector<float>& spectrum,
+                               float fs, int fftSize, int topN = 15)
+{
+    struct Peak
+    {
+        int bin;
+        float freq;
+        float amp;
+    };
+    std::vector<Peak> peaks;
+    for (int k = 2; k < static_cast<int>(spectrum.size()) - 1; ++k)
+    {
+        if (spectrum[k] > spectrum[k - 1] && spectrum[k] > spectrum[k + 1])
+            peaks.push_back({k, k * fs / fftSize, spectrum[k]});
+    }
+    std::sort(peaks.begin(), peaks.end(),
+              [](const Peak& a, const Peak& b) { return a.amp > b.amp; });
+    if (static_cast<int>(peaks.size()) > topN) peaks.resize(topN);
+    std::sort(peaks.begin(), peaks.end(),
+              [](const Peak& a, const Peak& b) { return a.freq < b.freq; });
+
+    float maxAmp = 0.0f;
+    for (const auto& p : peaks) if (p.amp > maxAmp) maxAmp = p.amp;
+    if (maxAmp <= 0.0f) maxAmp = 1.0f;
+
+    std::cout << "  Freq (Hz)  |  Amplitude  |  Bar\n";
+    std::cout << "  -----------+-------------+--------------------------------\n";
+    for (const auto& p : peaks)
+    {
+        const int barLen = static_cast<int>(30.0f * p.amp / maxAmp + 0.5f);
+        std::string bar(barLen, '#');
+        std::cout << "  " << std::setw(9) << std::fixed << std::setprecision(2)
+            << p.freq << "  |  "
+            << std::setw(9) << std::setprecision(5) << p.amp
+            << "  |  " << bar << "\n";
+    }
+    std::cout << "\n";
+}
+
+// ------------------------------------------------------------
+//  Вспомогательная: спросить y/n.
+// ------------------------------------------------------------
+static int askYesNo(const std::string& prompt)
+{
+    while (true)
+    {
+        std::cout << prompt << " [y/n/q]: ";
+        std::string line;
+        if (!std::getline(std::cin, line)) return -1;
+        if (line.empty()) continue;
+        char c = static_cast<char>(std::tolower(line[0]));
+        if (c == 'y') return 1;
+        if (c == 'n') return 0;
+        if (c == 'q' || c == '0') return -1;
+    }
+}
+
+// ------------------------------------------------------------
+//  Сборка сцены по выбору пользователя + генерация WAV.
+// ------------------------------------------------------------
+static void runCustomScene(const UcaGeometry& uca, float fs)
+{
+    std::cout << "\n=== Сборка сцены ===\n";
+
+    bool useProp = false;
+    bool useEng = false;
+    bool useDolphin = false;
+    bool useOcean = false;
+
+    while (true)
+    {
+        int r = askYesNo("Включить ВИНТ?      ");
+        if (r < 0) return;
+        useProp = (r == 1);
+
+        r = askYesNo("Включить ДВИГАТЕЛЬ? ");
+        if (r < 0) return;
+        useEng = (r == 1);
+
+        r = askYesNo("Включить ДЕЛЬФИНА?  ");
+        if (r < 0) return;
+        useDolphin = (r == 1);
+
+        r = askYesNo("Включить ШУМ ОКЕАНА?");
+        if (r < 0) return;
+        useOcean = (r == 1);
+
+        if (useProp || useEng || useDolphin || useOcean) break;
+        std::cout << "!!! Нужна хотя бы одна компонента. Повторите.\n\n";
+    }
+
+    float azimuth = SCENE_AZIMUTH_DEG;
+    if (useProp || useEng || useDolphin)
+    {
+        std::cout << "Азимут (0..359) [Enter = " << SCENE_AZIMUTH_DEG << "]: ";
+        std::string line;
+        std::getline(std::cin, line);
+        if (!line.empty())
+        {
+            try { azimuth = std::stof(line); }
+            catch (...) { azimuth = SCENE_AZIMUTH_DEG; }
+        }
+    }
+
+    float recvSnr = SCENE_RECEIVER_SNR_DB;
+    std::cout << "SNR приёмника (dB) [Enter = " << SCENE_RECEIVER_SNR_DB << "]: ";
+    {
+        std::string line;
+        std::getline(std::cin, line);
+        if (!line.empty())
+        {
+            try { recvSnr = std::stof(line); }
+            catch (...) { recvSnr = SCENE_RECEIVER_SNR_DB; }
+        }
+    }
+
+    const int totalSamples = static_cast<int>(fs) * SCENE_DURATION_SEC;
+
+    SceneParams baseSp;
+    baseSp.azimuthDeg = azimuth;
+    baseSp.soundSpeed = SOUND_SPEED_WATER;
+    baseSp.receiverSnrDb = recvSnr;
+    baseSp.noiseSeed = 42;
+    baseSp.oceanEnabled = false;
+
+    auto fillOceanParams = [](OceanNoiseParams& op)
+    {
+        op.level = OCEAN_LEVEL;
+        op.rumbleWeight = OCEAN_RUMBLE_WEIGHT;
+        op.midWeight = OCEAN_MID_WEIGHT;
+        op.hissWeight = OCEAN_HISS_WEIGHT;
+        op.rumbleSlope = OCEAN_RUMBLE_SLOPE;
+        op.midSlope = OCEAN_MID_SLOPE;
+        op.hissSlope = OCEAN_HISS_SLOPE;
+        op.spikeRate = OCEAN_SPIKE_RATE;
+        op.spikeAmp = OCEAN_SPIKE_AMP;
+        op.spikeSpatialFrac = OCEAN_SPIKE_SPATIAL_FRAC;
+        op.dropTauMinMs = OCEAN_DROP_TAU_MIN_MS;
+        op.dropTauMaxMs = OCEAN_DROP_TAU_MAX_MS;
+        op.bubbleTauMinMs = OCEAN_BUBBLE_TAU_MIN_MS;
+        op.bubbleTauMaxMs = OCEAN_BUBBLE_TAU_MAX_MS;
+        op.bubbleFreqStartMin = OCEAN_BUBBLE_F0_MIN;
+        op.bubbleFreqStartMax = OCEAN_BUBBLE_F0_MAX;
+        op.bubbleFreqEndMin = OCEAN_BUBBLE_F1_MIN;
+        op.bubbleFreqEndMax = OCEAN_BUBBLE_F1_MAX;
+        op.clickTauMinMs = OCEAN_CLICK_TAU_MIN_MS;
+        op.clickTauMaxMs = OCEAN_CLICK_TAU_MAX_MS;
+        op.echoCount = OCEAN_ECHO_COUNT;
+        op.echoDelayMinMs = OCEAN_ECHO_DELAY_MIN_MS;
+        op.echoDelayMaxMs = OCEAN_ECHO_DELAY_MAX_MS;
+        op.echoGainMin = OCEAN_ECHO_GAIN_MIN;
+        op.echoGainMax = OCEAN_ECHO_GAIN_MAX;
+        op.echoAzSpreadDeg = OCEAN_ECHO_AZ_SPREAD_DEG;
+        op.waveRate = OCEAN_WAVE_RATE;
+        op.waveAmp = OCEAN_WAVE_AMP;
+        op.waveDurationMinS = OCEAN_WAVE_DURATION_MIN_S;
+        op.waveDurationMaxS = OCEAN_WAVE_DURATION_MAX_S;
+        op.waveSpatialFrac = OCEAN_WAVE_SPATIAL_FRAC;
+        op.modulationDepth = OCEAN_MODULATION_DEPTH;
+        op.modulationHz = OCEAN_MODULATION_HZ;
+        op.seed = OCEAN_SEED;
+    };
+
+    auto makeProp = []() -> std::unique_ptr<SourceModel>
+    {
+        PropellerParams pp;
+        pp.numBlades = PROP_NUM_BLADES;
+        pp.rpm = PROP_RPM;
+        pp.depthM = PROP_DEPTH_M;
+        pp.numHarmonics = PROP_NUM_HARMONICS;
+        pp.modulationDepth = PROP_MODULATION_DEPTH;
+        pp.modulationHz = PROP_MODULATION_HZ;
+        pp.cavitation = PROP_CAVITATION;
+        pp.snrDb = PROP_SNR_DB;
+        pp.seed = PROP_SEED;
+        return std::make_unique<PropellerSubmarine>(pp);
+    };
+
+    auto makeEng = []() -> std::unique_ptr<SourceModel>
+    {
+        EngineParams ep;
+        ep.rpm = ENG_RPM;
+        ep.numHarmonics = ENG_NUM_HARMONICS;
+        ep.numResonances = ENG_NUM_RESONANCES;
+        ep.mechNoiseLevel = ENG_MECH_NOISE_LEVEL;
+        ep.snrDb = ENG_SNR_DB;
+        ep.seed = ENG_SEED;
+        return std::make_unique<EngineSubmarine>(ep);
+    };
+
+    auto makeDolphin = []() -> std::unique_ptr<SourceModel>
+    {
+        DolphinParams dp;
+        dp.numWhistlesPerSec = DOLPHIN_WHISTLES_PER_SEC;
+        dp.whistleDurationMin = DOLPHIN_WHISTLE_DUR_MIN;
+        dp.whistleDurationMax = DOLPHIN_WHISTLE_DUR_MAX;
+        dp.whistleFreqMin = DOLPHIN_WHISTLE_FREQ_MIN;
+        dp.whistleFreqMax = DOLPHIN_WHISTLE_FREQ_MAX;
+        dp.whistleSweepDepth = DOLPHIN_WHISTLE_SWEEP;
+        dp.numHarmonics = DOLPHIN_NUM_HARMONICS;
+        dp.clickRate = DOLPHIN_CLICK_RATE;
+        dp.clickDurationUs = DOLPHIN_CLICK_DUR_US;
+        dp.clickFreqMin = DOLPHIN_CLICK_FREQ_MIN;
+        dp.clickFreqMax = DOLPHIN_CLICK_FREQ_MAX;
+        dp.clicksPerTrain = DOLPHIN_CLICKS_PER_TRAIN;
+        dp.burstRate = DOLPHIN_BURST_RATE;
+        dp.burstDurationMin = DOLPHIN_BURST_DUR_MIN;
+        dp.burstDurationMax = DOLPHIN_BURST_DUR_MAX;
+        dp.burstClickIntervalUs = DOLPHIN_BURST_CLICK_US;
+        dp.burstFreqMin = DOLPHIN_BURST_FREQ_MIN;
+        dp.burstFreqMax = DOLPHIN_BURST_FREQ_MAX;
+        dp.snrDb = DOLPHIN_SNR_DB;
+        dp.seed = DOLPHIN_SEED;
+        return std::make_unique<Dolphin>(dp);
+    };
+
+    if (useProp)
+    {
+        SceneParams sp = baseSp;
+        Scene scene;
+        scene.setParams(sp);
+        scene.addSource(makeProp());
+
+        std::array<std::vector<float>, NUM_CHANNELS> ch8;
+        scene.generate(ch8, totalSamples, fs, uca);
+
+        const std::string name = "scene_propeller.wav";
+        if (writeWavFloat32(name, ch8, static_cast<int>(fs)))
+            std::cout << "  Saved: " << name << "\n";
+        else
+            std::cout << "  FAILED: " << name << "\n";
+    }
+
+    if (useEng)
+    {
+        SceneParams sp = baseSp;
+        Scene scene;
+        scene.setParams(sp);
+        scene.addSource(makeEng());
+
+        std::array<std::vector<float>, NUM_CHANNELS> ch8;
+        scene.generate(ch8, totalSamples, fs, uca);
+
+        const std::string name = "scene_engine.wav";
+        if (writeWavFloat32(name, ch8, static_cast<int>(fs)))
+            std::cout << "  Saved: " << name << "\n";
+        else
+            std::cout << "  FAILED: " << name << "\n";
+    }
+
+    if (useDolphin)
+    {
+        SceneParams sp = baseSp;
+        Scene scene;
+        scene.setParams(sp);
+        scene.addSource(makeDolphin());
+
+        std::array<std::vector<float>, NUM_CHANNELS> ch8;
+        scene.generate(ch8, totalSamples, fs, uca);
+
+        const std::string name = "scene_dolphin.wav";
+        if (writeWavFloat32(name, ch8, static_cast<int>(fs)))
+            std::cout << "  Saved: " << name << "\n";
+        else
+            std::cout << "  FAILED: " << name << "\n";
+    }
+
+    if (useOcean)
+    {
+        SceneParams sp = baseSp;
+        sp.oceanEnabled = true;
+        fillOceanParams(sp.oceanParams);
+
+        Scene scene;
+        scene.setParams(sp);
+
+        std::array<std::vector<float>, NUM_CHANNELS> ch8;
+        scene.generate(ch8, totalSamples, fs, uca);
+
+        const std::string name = "scene_ocean.wav";
+        if (writeWavFloat32(name, ch8, static_cast<int>(fs)))
+            std::cout << "  Saved: " << name << "\n";
+        else
+            std::cout << "  FAILED: " << name << "\n";
+    }
+
+    {
+        SceneParams sp = baseSp;
+        if (useOcean)
+        {
+            sp.oceanEnabled = true;
+            fillOceanParams(sp.oceanParams);
+        }
+
+        Scene scene;
+        scene.setParams(sp);
+        if (useProp) scene.addSource(makeProp());
+        if (useEng) scene.addSource(makeEng());
+        if (useDolphin) scene.addSource(makeDolphin());
+
+        std::array<std::vector<float>, NUM_CHANNELS> ch8;
+        scene.generate(ch8, totalSamples, fs, uca);
+
+        const std::string name = "scene_combined.wav";
+        if (writeWavFloat32(name, ch8, static_cast<int>(fs)))
+            std::cout << "  Saved: " << name << "\n";
+        else
+            std::cout << "  FAILED: " << name << "\n";
+
+        std::cout << "\n  Spectrum (combined, channel 0, first 8192 samples):\n";
+        const int FFT_N = std::min(8192, totalSamples);
+        std::vector<float> seg(ch8[0].begin(), ch8[0].begin() + FFT_N);
+        auto spec = amplitudeSpectrum(seg);
+        printSpectrumAscii(spec, fs, FFT_N, 15);
+    }
+
+    std::cout << "\n";
+}
+
+// ------------------------------------------------------------
+//  Режим "1" — одиночные тестовые WAV.
+// ------------------------------------------------------------
+static void generateSingleFiles(const UcaGeometry& uca, float fs)
+{
+    runCustomScene(uca, fs);
+}
+
+// ------------------------------------------------------------
+//  ТЕСТОВЫЙ РЕЖИМ: генерация свиста дельфина (моно).
+//
+//  Новая архитектура: НЕПРЕРЫВНЫЙ длинный ЧМ-сигнал
+//  на всю длительность, U-образная траектория частоты,
+//  низкие частоты — часть свиста, стрёкот — «шершавый».
+// ------------------------------------------------------------
+static void generateWhistleTest(float fs)
+{
+    std::cout << "\n=== ТЕСТ: свист дельфина (моно) ===\n";
+    std::cout << "  Модель: DolphinWhistleTest\n";
+    std::cout << "  Длительность: 5 сек\n";
+    std::cout << "  Частота дискретизации: " << fs << " Гц\n";
+    std::cout << "  Формат: моно, 32-bit float\n\n";
+
+    DolphinWhistleTestParams p;
+    p.fs = fs;
+    p.durationSec = 5.0f;
+
+    // Шум моря — тихий.
+    p.seaNoiseLevel = 0.004f;
+    p.seaNoiseAmDepth = 0.4f;
+    p.seaNoiseAmHz = 0.15f;
+
+    // Стрёкот — громче, потому что теперь он идёт только в конце фраз.
+    p.crackleLevel = 0.15f;
+    p.crackleDurMinMs = 0.5f;
+    p.crackleDurMaxMs = 2.0f;
+    p.crackleFreqMin = 8000.0f;
+    p.crackleFreqMax = 14000.0f;
+
+    p.seed = 77777;
+
+    DolphinWhistleTest gen(p);
+
+    const int totalSamples = static_cast<int>(fs * p.durationSec);
+    std::vector<float> buffer(totalSamples, 0.0f);
+
+    gen.generate(buffer.data(), totalSamples);
+
+    const std::string name = "whistle_test.wav";
+    if (writeMonoWavFloat32(name, buffer, static_cast<int>(fs)))
+        std::cout << "  Saved: " << name << "\n";
+    else
+        std::cout << "  FAILED: " << name << "\n";
+
+    std::cout << "  Прогоните " << name << " через sound_digit и пришлите отчёт.\n\n";
+}
+
+// ------------------------------------------------------------
+//  Режим "2" — пакетный датасет.
+// ------------------------------------------------------------
+static void generateDataset(const UcaGeometry& uca, float fs)
+{
+    std::cout << "\n=== Генерация датасета ===\n";
+
+    DatasetSelection sel;
+    while (true)
+    {
+        int r = askYesNo("Генерировать PropellerSub?");
+        if (r < 0) return;
+        sel.propeller = (r == 1);
+
+        r = askYesNo("Генерировать EngineSub?   ");
+        if (r < 0) return;
+        sel.engine = (r == 1);
+
+        r = askYesNo("Генерировать Dolphin?     ");
+        if (r < 0) return;
+        sel.dolphin = (r == 1);
+
+        r = askYesNo("Генерировать OceanNoise?  ");
+        if (r < 0) return;
+        sel.ocean = (r == 1);
+
+        if (sel.propeller || sel.engine || sel.dolphin || sel.ocean) break;
+        std::cout << "!!! Хотя бы один класс должен быть выбран. Повторите.\n\n";
+    }
+
+    DatasetParams dp;
+    dp.uniformAzimuth = true;
+    dp.azimuthDeg = SCENE_AZIMUTH_DEG;
+
+    if (sel.propeller || sel.engine || sel.dolphin)
+    {
+        int r = askYesNo("Равномерный азимут 0..359?  ");
+        if (r < 0) return;
+        dp.uniformAzimuth = (r == 1);
+
+        if (!dp.uniformAzimuth)
+        {
+            std::cout << "Конкретный азимут (0..359) [Enter = " << SCENE_AZIMUTH_DEG << "]: ";
+            std::string line;
+            std::getline(std::cin, line);
+            if (!line.empty())
+            {
+                try { dp.azimuthDeg = std::stof(line); }
+                catch (...) { dp.azimuthDeg = SCENE_AZIMUTH_DEG; }
+            }
+        }
+    }
+
+    dp.receiverSnrDb = SCENE_RECEIVER_SNR_DB;
+    std::cout << "SNR приёмника (dB) [Enter = " << SCENE_RECEIVER_SNR_DB << "]: ";
+    {
+        std::string line;
+        std::getline(std::cin, line);
+        if (!line.empty())
+        {
+            try { dp.receiverSnrDb = std::stof(line); }
+            catch (...) { dp.receiverSnrDb = SCENE_RECEIVER_SNR_DB; }
+        }
+    }
+
+    int n = 0;
+    std::cout << "Сколько файлов на класс? [Enter = 10]: ";
+    std::string line;
+    std::getline(std::cin, line);
+    if (!line.empty())
+    {
+        try { n = std::stoi(line); }
+        catch (...) { n = 0; }
+    }
+    if (n <= 0) n = 10;
+
+    dp.filesPerClass = n;
+    dp.durationSec = SCENE_DURATION_SEC;
+    dp.sampleRate = fs;
+    dp.outputDir = "dataset";
+
+    DatasetGenerator gen(uca, dp, sel);
+    gen.generate();
+}
+
+// ------------------------------------------------------------
+//  main
+// ------------------------------------------------------------
+int main()
+{
+#ifdef _WIN32
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+#endif
+
+    std::cout << "=== hydroacoustic ===\n";
+
+    UcaGeometry uca(NUM_CHANNELS, UCA_RADIUS_M);
+    const float fs = static_cast<float>(SAMPLE_RATE);
+
+    while (true)
+    {
+        std::cout << "\n";
+        std::cout << "  1 - Сгенерировать одиночный WAV (интерактивный выбор)\n";
+        std::cout << "  2 - Сгенерировать пакетный датасет\n";
+        std::cout << "  3 - ТЕСТ: свист дельфина (моно, отдельная модель)\n";
+        std::cout << "  0 - Выход\n";
+        std::cout << "Выбор: ";
+
+        std::string choice;
+        if (!std::getline(std::cin, choice)) break;
+        if (choice == "0") break;
+
+        if (choice == "1")
+        {
+            generateSingleFiles(uca, fs);
+        }
+        else if (choice == "2")
+        {
+            generateDataset(uca, fs);
+        }
+        else if (choice == "3")
+        {
+            generateWhistleTest(fs);
+        }
+        else
+        {
+            std::cout << "Неизвестный выбор.\n";
+        }
+    }
+
+    std::cout << "Bye.\n";
+    return 0;
+}
+
+
+
+
+
+// files\hydroacoustic\simulator\params.h
+#pragma once
+#include <cstdint>
+#include "types.h"
+
+// ============================================================
+//  ЕДИНЫЙ ИСТОЧНИК ПАРАМЕТРОВ.
+//
+//  ВСЕ ЧИСЛОВЫЕ ЗНАЧЕНИЯ — ЗДЕСЬ.
+//  Структуры данных (PropellerParams, EngineParams, OceanNoiseParams)
+//  находятся в своих заголовках. Они описывают СХЕМУ полей,
+//  а конкретные значения берутся отсюда.
+//
+//  СЕКЦИЯ 1 — фиксированные значения (эталон для одиночных WAV).
+//  СЕКЦИЯ 2 (namespace ds) — диапазоны для датасета.
+// ============================================================
+
+namespace hydro
+{
+    // ============================================================
+    //  СЕКЦИЯ 1. ФИКСИРОВАННЫЕ ЗНАЧЕНИЯ (эталон)
+    // ============================================================
+
+    // ---------- ОБЩИЕ ПАРАМЕТРЫ СЦЕНЫ ----------
+
+    constexpr int SCENE_DURATION_SEC = 5;
+    constexpr float SCENE_AZIMUTH_DEG = 45.0f;
+
+    // ---------- ШУМ ПРИЁМНИКА (глобальный, внутри Propagation) ----------
+    // Чем БОЛЬШЕ число — тем ТИШЕ шум.
+    //   +120 → шум 0 | +40 → почти чисто | +10 → заметный
+    //   0 → шум = сигнал | -10 → сигнал на грани | -40 → только шум
+    constexpr float SCENE_RECEIVER_SNR_DB = 30.0f;
+
+    // ============================================================
+    //  ПАРАМЕТРЫ ИСТОЧНИКА «ВИНТ ПЛ» (PropellerSubmarine)
+    // ============================================================
+
+    constexpr int PROP_NUM_BLADES = 7;
+    constexpr float PROP_RPM = 400.0f;
+    constexpr float PROP_DEPTH_M = 100.0f;
+    constexpr int PROP_NUM_HARMONICS = 6;
+    constexpr float PROP_MODULATION_DEPTH = 0.2f;
+    constexpr float PROP_MODULATION_HZ = 0.3f;
+    constexpr float PROP_CAVITATION = 0.3f;
+    constexpr float PROP_SNR_DB = 30.0f;
+    constexpr uint32_t PROP_SEED = 12345;
+
+    // ============================================================
+    //  ПАРАМЕТРЫ ИСТОЧНИКА «ДВИГАТЕЛЬ ПЛ» (EngineSubmarine)
+    // ============================================================
+
+    constexpr float ENG_RPM = 300.0f;
+    constexpr int ENG_NUM_HARMONICS = 4;
+    constexpr int ENG_NUM_RESONANCES = 3;
+    constexpr float ENG_MECH_NOISE_LEVEL = 0.2f;
+    constexpr float ENG_SNR_DB = 30.0f;
+    constexpr uint32_t ENG_SEED = 54321;
+
+
+    // ============================================================
+    //  ПАРАМЕТРЫ ДЕЛЬФИНА-АФАЛИНЫ (Dolphin, Tursiops truncatus)
+    // ============================================================
+
+    // --- Свисты (коммуникация) ---
+    constexpr int DOLPHIN_WHISTLES_PER_SEC = 3;
+    constexpr float DOLPHIN_WHISTLE_DUR_MIN = 0.4f;
+    constexpr float DOLPHIN_WHISTLE_DUR_MAX = 0.8f;
+    constexpr float DOLPHIN_WHISTLE_FREQ_MIN = 2000.0f;
+    constexpr float DOLPHIN_WHISTLE_FREQ_MAX = 9000.0f;
+    constexpr float DOLPHIN_WHISTLE_SWEEP = 0.6f;
+    constexpr int DOLPHIN_NUM_HARMONICS = 2;
+
+    // --- Щелчки (эхолокация, суррогатные) ---
+    constexpr float DOLPHIN_CLICK_RATE = 1.0f; // серий в секунду
+    constexpr float DOLPHIN_CLICK_DUR_US = 100.0f; // мкс
+    constexpr float DOLPHIN_CLICK_FREQ_MIN = 1000.0f;
+    constexpr float DOLPHIN_CLICK_FREQ_MAX = 8000.0f;
+    constexpr int DOLPHIN_CLICKS_PER_TRAIN = 3;
+
+    // --- Burst pulses (жужжание) ---
+    constexpr float DOLPHIN_BURST_RATE = 0.3f; // вспышек в секунду
+    constexpr float DOLPHIN_BURST_DUR_MIN = 0.3f;
+    constexpr float DOLPHIN_BURST_DUR_MAX = 1.0f;
+    constexpr float DOLPHIN_BURST_CLICK_US = 500.0f; // интервал между щелчками, мкс
+    constexpr float DOLPHIN_BURST_FREQ_MIN = 2000.0f;
+    constexpr float DOLPHIN_BURST_FREQ_MAX = 8000.0f;
+
+    // --- Общие ---
+    constexpr float DOLPHIN_SNR_DB = 30.0f;
+    constexpr uint32_t DOLPHIN_SEED = 77777;
+
+
+    // ============================================================
+    //  ПАРАМЕТРЫ ШУМА ОКЕАНА (OceanNoise). ЭТАП 1: всплески + эхо + волны.
+    // ============================================================
+
+    constexpr float OCEAN_LEVEL = 0.5f;
+
+    // Фон (выключен).
+    // Фон (включён — сшивает волны между собой).
+    constexpr float OCEAN_RUMBLE_WEIGHT = 0.15f;
+    constexpr float OCEAN_MID_WEIGHT = 0.10f;
+    constexpr float OCEAN_HISS_WEIGHT = 0.05f;
+
+    // Насколько фон модулируется волнами (0 = ровный, 1 = сильно дышит).
+    constexpr float OCEAN_BG_MODULATION = 0.7f;
+
+    constexpr float OCEAN_RUMBLE_SLOPE = 0.97f;
+    constexpr float OCEAN_MID_SLOPE = 0.65f;
+    constexpr float OCEAN_HISS_SLOPE = 0.25f;
+
+    // Спайки.
+    // constexpr float OCEAN_SPIKE_RATE        = 3.0f;
+    constexpr float OCEAN_SPIKE_RATE = 0.0f;
+    constexpr float OCEAN_SPIKE_AMP = 0.5f;
+    constexpr float OCEAN_SPIKE_SPATIAL_FRAC = 0.9f;
+
+    constexpr float OCEAN_DROP_TAU_MIN_MS = 8.0f;
+    constexpr float OCEAN_DROP_TAU_MAX_MS = 20.0f;
+
+    constexpr float OCEAN_BUBBLE_TAU_MIN_MS = 40.0f;
+    constexpr float OCEAN_BUBBLE_TAU_MAX_MS = 90.0f;
+    constexpr float OCEAN_BUBBLE_F0_MIN = 500.0f;
+    constexpr float OCEAN_BUBBLE_F0_MAX = 1200.0f;
+    constexpr float OCEAN_BUBBLE_F1_MIN = 150.0f;
+    constexpr float OCEAN_BUBBLE_F1_MAX = 350.0f;
+
+    constexpr float OCEAN_CLICK_TAU_MIN_MS = 4.0f;
+    constexpr float OCEAN_CLICK_TAU_MAX_MS = 10.0f;
+
+    // Эхо.
+    constexpr int OCEAN_ECHO_COUNT = 2;
+    constexpr float OCEAN_ECHO_DELAY_MIN_MS = 80.0f;
+    constexpr float OCEAN_ECHO_DELAY_MAX_MS = 350.0f;
+    constexpr float OCEAN_ECHO_GAIN_MIN = 0.40f;
+    constexpr float OCEAN_ECHO_GAIN_MAX = 0.75f;
+    constexpr float OCEAN_ECHO_AZ_SPREAD_DEG = 55.0f;
+
+    // Волны.
+    constexpr float OCEAN_WAVE_RATE = 0.35f; // 1 волна раз в 2.9 секунды
+    constexpr float OCEAN_WAVE_AMP = 0.25f;
+    constexpr float OCEAN_WAVE_DURATION_MIN_S = 1.5f;
+    constexpr float OCEAN_WAVE_DURATION_MAX_S = 2.5f;
+    constexpr float OCEAN_WAVE_SPATIAL_FRAC = 0.9f;
+
+    // Модуляция (выключена).
+    constexpr float OCEAN_MODULATION_DEPTH = 0.0f;
+    constexpr float OCEAN_MODULATION_HZ = 0.15f;
+
+    constexpr uint32_t OCEAN_SEED = 777;
+
+    // ============================================================
+    //  СЕКЦИЯ 2. ДИАПАЗОНЫ ДЛЯ ДАТАСЕТА.
+    //  Используются ТОЛЬКО в generator.cpp (пункт «2»).
+    // ============================================================
+
+    namespace ds
+    {
+        // --- Винт: сигнал ---
+        constexpr int PROP_NUM_BLADES_MIN = 5;
+        constexpr int PROP_NUM_BLADES_MAX = 9;
+        constexpr float PROP_RPM_MIN = 150.0f;
+        constexpr float PROP_RPM_MAX = 500.0f;
+        constexpr int PROP_NUM_HARMONICS_MIN = 4;
+        constexpr int PROP_NUM_HARMONICS_MAX = 8;
+        constexpr float PROP_MOD_DEPTH_MIN = 0.1f;
+        constexpr float PROP_MOD_DEPTH_MAX = 0.4f;
+        constexpr float PROP_MOD_HZ_MIN = 0.1f;
+        constexpr float PROP_MOD_HZ_MAX = 0.5f;
+
+        // --- Винт: шум ---
+        constexpr float PROP_CAVITATION_MIN = 0.1f;
+        constexpr float PROP_CAVITATION_MAX = 0.5f;
+        constexpr float PROP_SNR_DB_MIN = 20.0f;
+        constexpr float PROP_SNR_DB_MAX = 40.0f;
+
+        // --- Двигатель: сигнал ---
+        constexpr float ENG_RPM_MIN = 200.0f;
+        constexpr float ENG_RPM_MAX = 800.0f;
+        constexpr int ENG_NUM_HARMONICS_MIN = 2;
+        constexpr int ENG_NUM_HARMONICS_MAX = 6;
+        constexpr int ENG_NUM_RESONANCES_MIN = 0;
+        constexpr int ENG_NUM_RESONANCES_MAX = 3;
+
+        // --- Двигатель: шум ---
+        constexpr float ENG_MECH_NOISE_MIN = 0.1f;
+        constexpr float ENG_MECH_NOISE_MAX = 0.4f;
+        constexpr float ENG_SNR_DB_MIN = 20.0f;
+        constexpr float ENG_SNR_DB_MAX = 40.0f;
+
+
+        // --- Дельфин: свисты ---
+        constexpr int   DOLPHIN_WHISTLES_PER_SEC_MIN = 2;
+        constexpr int   DOLPHIN_WHISTLES_PER_SEC_MAX = 5;
+        constexpr float DOLPHIN_WHISTLE_FREQ_MIN_MIN = 1500.0f;
+        constexpr float DOLPHIN_WHISTLE_FREQ_MIN_MAX = 2500.0f;
+        constexpr float DOLPHIN_WHISTLE_FREQ_MAX_MIN = 7000.0f;
+        constexpr float DOLPHIN_WHISTLE_FREQ_MAX_MAX = 10000.0f;
+
+        // --- Дельфин: щелчки ---
+        constexpr float DOLPHIN_CLICK_RATE_MIN = 0.3f;
+        constexpr float DOLPHIN_CLICK_RATE_MAX = 2.0f;
+
+        // --- Дельфин: burst pulses ---
+        constexpr float DOLPHIN_BURST_RATE_MIN = 0.1f;
+        constexpr float DOLPHIN_BURST_RATE_MAX = 0.6f;
+
+        // --- Дельфин: SNR ---
+        constexpr float DOLPHIN_SNR_DB_MIN = 20.0f;
+        constexpr float DOLPHIN_SNR_DB_MAX = 40.0f;
+
+
+        // --- Сцена ---
+        constexpr float SCENE_AZIMUTH_MIN = 0.0f;
+        constexpr float SCENE_AZIMUTH_MAX = 359.9f;
+        constexpr float SCENE_RECEIVER_SNR_MIN = 20.0f;
+        constexpr float SCENE_RECEIVER_SNR_MAX = 40.0f;
+
+        // --- Шум океана (для датасета, шире, чем фиксированный) ---
+        //   От почти полного штиля до сильного шторма.
+        constexpr float OCEAN_LEVEL_MIN = 0.0f;
+        constexpr float OCEAN_LEVEL_MAX = 0.6f;
+
+        //   Всплески — от «спокойно» до «дождя» (часто).
+        constexpr float OCEAN_SPIKE_RATE_MIN = 0.1f;
+        constexpr float OCEAN_SPIKE_RATE_MAX = 5.0f;
+
+        //   Модуляция — глубина и частота.
+        constexpr float OCEAN_MOD_DEPTH_MIN = 0.1f;
+        constexpr float OCEAN_MOD_DEPTH_MAX = 0.5f;
+        constexpr float OCEAN_MOD_HZ_MIN = 0.05f;
+        constexpr float OCEAN_MOD_HZ_MAX = 0.5f;
+    } // namespace ds
+} // namespace hydro
+
+
+
+
+
+// files\hydroacoustic\simulator\core\dolphin_whistle_test.cpp
+#include "dolphin_whistle_test.h"
+#include "math_constants.h"
+
+#include <cmath>
+#include <algorithm>
+
+namespace hydro
+{
+    DolphinWhistleTest::DolphinWhistleTest(const DolphinWhistleTestParams& p)
+        : p_(p), rng_(p.seed)
+    {
+    }
+
+    void DolphinWhistleTest::setParams(const DolphinWhistleTestParams& p)
+    {
+        p_ = p;
+        rng_.seed(p.seed);
+    }
+
+    // ============================================================
+    //  Свист — фразы с уходом в низ в конце.
+    //
+    //  Каждая фраза:
+    //    - старт 6–9 кГц;
+    //    - середина 3–6 кГц;
+    //    - финиш 0.8–1.5 кГц (уход в низ = «эхо»).
+    //  Края фразы плавные: вход 15%, выход 35%.
+    //  Между фразами — пауза 200–500 мс.
+    //
+    //  Стрёкот привязан к концу фразы (см. renderCrackle).
+    // ============================================================
+    void DolphinWhistleTest::renderWhistle(std::vector<float>& buffer,
+                                           int numSamples)
+    {
+        const float fs = p_.fs;
+        const float invFs = 1.0f / fs;
+        const float dur = static_cast<float>(numSamples) * invFs;
+
+        float phase = 0.0f;
+        float t = 0.0f;
+
+        std::uniform_real_distribution<float> phraseDurDist(0.6f, 1.3f);
+        std::uniform_real_distribution<float> pauseDist(0.20f, 0.50f);
+        std::uniform_real_distribution<float> startFreqDist(6000.0f, 9000.0f);
+        std::uniform_real_distribution<float> midFreqDist(3000.0f, 6000.0f);
+        std::uniform_real_distribution<float> endFreqDist(800.0f, 1500.0f);
+
+        while (t < dur)
+        {
+            const float phraseDur = phraseDurDist(rng_);
+            const float phraseEnd = std::min(t + phraseDur, dur);
+            const float phraseLen = phraseEnd - t;
+
+            const float fStart = startFreqDist(rng_);
+            const float fMid = midFreqDist(rng_);
+            const float fEnd = endFreqDist(rng_);
+
+            const int nStart = static_cast<int>(t * fs);
+            const int nEnd = static_cast<int>(phraseEnd * fs);
+
+            for (int n = nStart; n < nEnd && n < numSamples; ++n)
+            {
+                const float tLocal = static_cast<float>(n) * invFs;
+                const float u = (tLocal - t) / phraseLen;
+
+                // Три контрольные точки: fStart → fMid → fEnd.
+                // Кусочно-косинусная интерполяция.
+                float fInst;
+                if (u < 0.5f)
+                {
+                    const float v = u * 2.0f;
+                    const float s = 0.5f * (1.0f - std::cos(PI_F * v));
+                    fInst = fStart + (fMid - fStart) * s;
+                }
+                else
+                {
+                    const float v = (u - 0.5f) * 2.0f;
+                    const float s = 0.5f * (1.0f - std::cos(PI_F * v));
+                    fInst = fMid + (fEnd - fMid) * s;
+                }
+
+                // Огибающая: вход 15%, выход 35%.
+                float env = 1.0f;
+                if (u < 0.15f)
+                    env = 0.5f * (1.0f - std::cos(PI_F * u / 0.15f));
+                else if (u > 0.65f)
+                {
+                    const float v = (1.0f - u) / 0.35f;
+                    env = 0.5f * (1.0f - std::cos(PI_F * v));
+                }
+
+                phase += TWO_PI_F * fInst * invFs;
+                if (phase > TWO_PI_F) phase -= TWO_PI_F;
+
+                buffer[n] += std::sin(phase) * env;
+            }
+
+            t = phraseEnd + pauseDist(rng_);
+        }
+    }
+
+    // ============================================================
+    //  Шум моря — тихий широкополосный, наклон в НЧ.
+    // ============================================================
+    void DolphinWhistleTest::renderSeaNoise(std::vector<float>& buffer,
+                                            int numSamples)
+    {
+        if (p_.seaNoiseLevel <= 0.0f) return;
+
+        const float fs = p_.fs;
+        const float invFs = 1.0f / fs;
+
+        const float fc = 1200.0f;
+        const float a = std::exp(-TWO_PI_F * fc * invFs);
+        float lp = 0.0f;
+
+        for (int n = 0; n < numSamples; ++n)
+        {
+            const float t = static_cast<float>(n) * invFs;
+
+            const float white = gauss_(rng_);
+            lp = a * lp + (1.0f - a) * white;
+            const float band = 0.7f * lp + 0.3f * white;
+
