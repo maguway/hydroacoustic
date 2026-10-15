@@ -492,8 +492,8 @@ static void generateWhistleTest(float fs)
     DolphinWhistleTestParams p;
     p.fs = fs;
     p.durationSec = 5.0f;
-
     p.seed = 77777;
+    // Всё остальное — из .h (дефолты).
 
     DolphinWhistleTest gen(p);
 
