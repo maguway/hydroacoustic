@@ -162,26 +162,56 @@ namespace hydro
                 }
             }
 
+            // ============================================================
+            //  Гармоники 2×, 3×, 4× — с «живой» амплитудной модуляцией.
+            //
+            //  В хвосте (когда F0 ушла вниз) гармоники — основной
+            //  носитель звука. В эталоне они имеют:
+            //    - 2×: уровень −10…−13 дБ от основной, медленная AM;
+            //    - 3×: −15…−25 дБ, средняя AM;
+            //    - 4×: −15…+2 дБ, быстрая AM (сильно модулирована).
+            //
+            //  Каждая гармоника «дышит» своей частотой и глубиной.
+            //  Это даёт «живой» стрёкот, а не «звон».
+            // ============================================================
             const float gains[3] = {h1, h2, h3};
+
+            // Скорости AM для каждой гармоники (Гц) — разные, чтобы
+            // они не складывались в одну пульсацию.
+            const float amRate[3] = {2.3f, 4.1f, 7.7f};
+            // Глубины AM.
+            const float amDepth[3] = {0.30f, 0.50f, 0.80f};
+            // Фазовые сдвиги, чтобы модуляции не были синхронны.
+            const float amPhase[3] = {0.0f, 1.3f, 2.7f};
+
+            // Целевые уровни в хвосте: 2× −10 дБ, 3× −20 дБ, 4× −8 дБ.
+            const float targetDb[3] = {-10.0f, -20.0f, -8.0f};
+            const float targetLin[3] = {
+                std::pow(10.0f, targetDb[0] / 20.0f),
+                std::pow(10.0f, targetDb[1] / 20.0f),
+                std::pow(10.0f, targetDb[2] / 20.0f)
+            };
+
             for (int k = 0; k < 3; ++k)
             {
-                // Базовая частота гармоники.
                 float fH;
-                if (inTail && k >= 1)
+                if (inTail)
                 {
-                    // В хвосте: 3× и 4× — на «якорной» частоте.
-                    // Медленно сползают на 15% за хвост + лёгкое вибрато.
+                    // В хвосте: гармоники «отвязываются» от основной
+                    // и держатся на своей частоте (медленно сползая).
                     const float uTail = (u - p_.tailStartFrac)
                         / (1.0f - p_.tailStartFrac);
                     const float fAnchor = fBaseAtTailStart * float(k + 2);
-                    const float vibH = 25.0f * std::sin(TWO_PI_F * (5.0f + k) * tLocal);
-                    fH = fAnchor * (1.0f - uTail * 0.15f) + vibH;
+                    // Небольшое дрожание частоты (ЧМ).
+                    const float vibH = 8.0f
+                        * std::sin(TWO_PI_F * (4.0f + k) * tLocal);
+                    fH = fAnchor * (1.0f - uTail * 0.10f) + vibH;
                 }
                 else
                 {
                     // Вне хвоста: обычная гармоника от текущей fInst.
                     fH = fInst * float(k + 2);
-                    fH += 5.0f * std::sin(TWO_PI_F * (4.0f + k) * tLocal);
+                    fH += 4.0f * std::sin(TWO_PI_F * (3.0f + k) * tLocal);
                 }
 
                 if (fH >= fs * 0.45f) break;
@@ -190,16 +220,28 @@ namespace hydro
                 phaseH[k] += TWO_PI_F * fH * invFs;
                 if (phaseH[k] > TWO_PI_F) phaseH[k] -= TWO_PI_F;
 
-                // В хвосте гармоники 2×, 3×, 4× УСИЛИВАЮТСЯ
-                // до уровня основной — это и есть стрёкот дельфина.
-                // Они остаются на высоких частотах (в отличие от основной).
-                float gain = gains[k];
-                if (inTail && k >= 0)
+                // AM для каждой гармоники.
+                const float am_k = 1.0f
+                    - amDepth[k] * 0.5f
+                    + amDepth[k] * 0.5f
+                    * std::sin(TWO_PI_F * amRate[k] * tLocal + amPhase[k]);
+
+                // Целевой gain: в хвосте — «плавный переход»
+                // от базового к целевому, с AM.
+                float gain;
+                if (inTail)
                 {
                     const float uTail = (u - p_.tailStartFrac)
                         / (1.0f - p_.tailStartFrac);
-                    // Растёт до 3× к концу хвоста.
-                    gain *= (1.0f + 2.0f * uTail);
+                    // Переход от базового уровня к целевому за 30% хвоста.
+                    const float transition = std::min(1.0f, uTail / 0.30f);
+                    const float gTarget = targetLin[k] * am_k;
+                    gain = gains[k] * (1.0f - transition)
+                        + gTarget * transition;
+                }
+                else
+                {
+                    gain = gains[k];
                 }
 
                 sig += gain * std::sin(phaseH[k]);
