@@ -19,18 +19,11 @@ namespace hydro
 
     // ============================================================
     //  Рендер одной фразы.
-    //  Насыщенный тембр: дробные гармоники + узкополосный шум.
-    //  Вибрато на F0.
-    //  Сохраняем траекторию F0 для последующего эха.
-    // ============================================================
-    // ============================================================
-    //  Рендер одной фразы.
     //
-    //  Основная идея: в хвосте фразы (когда F0 уходит вниз)
-    //  гармоники 3×, 4×, 5× НЕ уходят вниз, а остаются наверху
-    //  и продолжают «звенеть». Это и есть стрёкот дельфина.
-    //
-    //  Каждая гармоника слегка вибрирует по частоте.
+    //  Основная F0 плавно едет по форме (нисходящая / восходящая / U).
+    //  В хвосте (u > tailStartFrac) F0 уходит в низ (до fEnd × tailEndFrac).
+    //  На каждом отсчёте — 3 гармоники (2×, 3×, 4×) с базовыми
+    //  уровнями harm1Db/harm2Db/harm3Db.
     // ============================================================
     void DolphinWhistleTest::renderPhrase(std::vector<float>& buffer,
                                           int numSamples,
@@ -47,10 +40,8 @@ namespace hydro
         const float h3 = std::pow(10.0f, p_.harm3Db / 20.0f);
 
         float phaseMain = ph.phase;
-        float phaseH[5] = {
-            ph.phase * 0.7f, ph.phase * 0.3f,
-            ph.phase * 0.5f, ph.phase * 0.9f,
-            ph.phase * 0.2f
+        float phaseH[3] = {
+            ph.phase * 0.7f, ph.phase * 0.3f, ph.phase * 0.5f
         };
 
         ph.fInstTrace.assign(ph.lengthSamples, 0.0f);
@@ -93,13 +84,14 @@ namespace hydro
             const bool inTail = (u > p_.tailStartFrac);
             if (inTail)
             {
-                const float v = (u - p_.tailStartFrac) / (1.0f - p_.tailStartFrac);
+                const float v = (u - p_.tailStartFrac)
+                    / (1.0f - p_.tailStartFrac);
                 const float sv = 0.5f * (1.0f - std::cos(PI_F * v));
                 const float fTail = ph.fEnd * p_.tailEndFrac;
                 fInst = fBase + (fTail - fBase) * sv;
             }
 
-            // --- Вибрато основной ---
+            // --- Вибрато ---
             const float vibMain = p_.vibDepthHz
                 * std::sin(TWO_PI_F * p_.vibRateHz * tLocal);
             fInst += vibMain;
@@ -127,114 +119,17 @@ namespace hydro
             if (phaseMain > TWO_PI_F) phaseMain -= TWO_PI_F;
             float sig = std::sin(phaseMain);
 
-            // --- Гармоники: 2×, 3×, 4× ---
-            // Ключевая идея: в хвосте гармоники 3×, 4× ОСТАЮТСЯ
-            // на своей частоте, зафиксированной НА МОМЕНТ ВХОДА в хвост
-            // (не на текущей fBase, которая уходит вниз).
-            // Это даёт «звонкий» высокочастотный хвост — стрёкот.
-
-            // Частота-якорь для хвоста: запоминаем fBase в момент
-            // входа в хвост. Храним как static в текущем вызове —
-            // но проще: вычисляем fBase при u = tailStartFrac.
-            float fBaseAtTailStart;
-            {
-                const float u0 = p_.tailStartFrac;
-                const float s0 = 0.5f * (1.0f - std::cos(PI_F * u0));
-                if (ph.shape == PhraseShape::Descending)
-                    fBaseAtTailStart = ph.fStart + (ph.fEnd - ph.fStart) * s0;
-                else if (ph.shape == PhraseShape::Ascending)
-                    fBaseAtTailStart = ph.fEnd + (ph.fStart - ph.fEnd) * s0;
-                else // UShape
-                {
-                    const float mid = 0.5f * (ph.fStart + ph.fEnd);
-                    if (u0 < 0.5f)
-                    {
-                        const float v = u0 * 2.0f;
-                        const float sv = 0.5f * (1.0f - std::cos(PI_F * v));
-                        fBaseAtTailStart = ph.fStart + (mid - ph.fStart) * sv;
-                    }
-                    else
-                    {
-                        const float v = (u0 - 0.5f) * 2.0f;
-                        const float sv = 0.5f * (1.0f - std::cos(PI_F * v));
-                        fBaseAtTailStart = mid + (ph.fStart - mid) * sv;
-                    }
-                }
-            }
-
-            // ============================================================
-            //  Гармоники 2×, 3×, 4× — «живой» стрёкот.
-            //
-            //  Из эталона (dolphins-are-playful, событие 13):
-            //    - F0: 882 → 1102 Гц (уходит вниз);
-            //    - 2× на −6…−13 дБ, «дышит»;
-            //    - 3× на −14…−22 дБ, «дышит» быстрее;
-            //    - 4× на −21…+1 дБ, «дышит» быстро.
-            //
-            //  Целевые уровни — из эталона. AM — разная у каждой
-            //  гармоники, фазы разнесены. Усиление растёт по u
-            //  (не только в хвосте) — гармоники живут всю фразу.
-            // ============================================================
+            // --- Гармоники ---
             const float gains[3] = {h1, h2, h3};
-
-            // Частоты AM (Гц) — разные, чтобы не совпадали.
-            const float amRate[3] = {2.3f, 4.1f, 7.7f};
-            // Глубины AM.
-            const float amDepth[3] = {0.45f, 0.60f, 0.85f};
-            // Фазы AM (рад) — жёстко разнесены.
-            const float amPhase[3] = {0.0f, 2.1f, 4.2f};
-
-            // Целевые уровни (дБ от основной) — из эталона.
-            const float targetDb[3] = {-6.0f, -16.0f, 0.0f};
-            const float targetLin[3] = {
-                std::pow(10.0f, targetDb[0] / 20.0f),
-                std::pow(10.0f, targetDb[1] / 20.0f),
-                std::pow(10.0f, targetDb[2] / 20.0f)
-            };
-
             for (int k = 0; k < 3; ++k)
             {
-                // Базовая частота гармоники.
-                float fH;
-                if (inTail)
-                {
-                    // В хвосте: гармоники фиксируются на частоте
-                    // входа в хвост, медленно сползают.
-                    const float uTail = (u - p_.tailStartFrac)
-                        / (1.0f - p_.tailStartFrac);
-                    const float fAnchor = fBaseAtTailStart * float(k + 2);
-                    const float vibH = 8.0f
-                        * std::sin(TWO_PI_F * (4.0f + k) * tLocal);
-                    fH = fAnchor * (1.0f - uTail * 0.10f) + vibH;
-                }
-                else
-                {
-                    // Вне хвоста: гармоника от текущей fInst.
-                    fH = fInst * float(k + 2);
-                    fH += 4.0f * std::sin(TWO_PI_F * (3.0f + k) * tLocal);
-                }
-
+                const float fH = fInst * float(k + 2);
                 if (fH >= fs * 0.45f) break;
-                if (fH < 20.0f) fH = 20.0f;
 
                 phaseH[k] += TWO_PI_F * fH * invFs;
                 if (phaseH[k] > TWO_PI_F) phaseH[k] -= TWO_PI_F;
 
-                // AM — своя у каждой гармоники.
-                const float am_k = 1.0f
-                    - amDepth[k] * 0.5f
-                    + amDepth[k] * 0.5f
-                    * std::sin(TWO_PI_F * amRate[k] * tLocal
-                        + amPhase[k]);
-
-                // Gain — линейно растёт по u (всю фразу).
-                // В хвосте гармоники уже «на полную».
-                const float ramp = u;
-                const float gTarget = targetLin[k] * am_k;
-                const float gain = gains[k] * (1.0f - ramp)
-                    + gTarget * ramp;
-
-                sig += gain * std::sin(phaseH[k]);
+                sig += gains[k] * std::sin(phaseH[k]);
             }
 
             buffer[idx] += sig * env * am;
@@ -242,10 +137,8 @@ namespace hydro
     }
 
     // ============================================================
-    //  Эхо для одной фразы.
-    //  Берём сохранённую траекторию F0, сдвигаем по частоте (×0.95)
-    //  и растягиваем по времени (×1.20).
-    //  Создаём 2–3 копии с разными задержками и амплитудами.
+    //  Эхо одной фразы.
+    //  Повторяет F0-траекторию, но тише, чуть ниже и растянуто.
     // ============================================================
     void DolphinWhistleTest::renderEchoForPhrase(std::vector<float>& buffer,
                                                  int numSamples,
@@ -263,26 +156,20 @@ namespace hydro
             std::pow(10.0f, p_.echoGain3Db / 20.0f)
         };
 
-        std::uniform_real_distribution<float> delayDist(
-            p_.echoDelayMinMs * 0.001f, p_.echoDelayMaxMs * 0.001f);
-
-        for (int e = 0; e < nEcho && e < 1; ++e) // ТОЛЬКО ОДНО эхо
+        for (int e = 0; e < nEcho && e < 1; ++e)
         {
-            const float delay = p_.echoDelayMinMs * 0.001f; // фиксированная
+            const float delay = p_.echoDelayMinMs * 0.001f;
             const int delaySamples = static_cast<int>(delay * fs);
             const float gain = gains[e];
             const float pitch = p_.echoPitchFactor;
             const float stretch = p_.echoStretch;
 
-            // Длина эха.
             const int echoLen = static_cast<int>(ph.lengthSamples * stretch);
-            const float invEchoDur = 1.0f / (static_cast<float>(echoLen) * invFs);
+            const float invEchoDur = 1.0f
+                / (static_cast<float>(echoLen) * invFs);
 
             float phaseMain = ph.phase * 0.5f;
-            float phaseH[4] = {
-                ph.phase * 0.3f, ph.phase * 0.8f,
-                ph.phase * 0.6f, ph.phase * 0.2f
-            };
+            float phaseH[2] = {ph.phase * 0.3f, ph.phase * 0.8f};
 
             for (int n = 0; n < echoLen; ++n)
             {
@@ -292,23 +179,21 @@ namespace hydro
                 const float tLocal = static_cast<float>(n) * invFs;
                 const float u = tLocal * invEchoDur;
 
-                // Берём F0 из оригинала (с растяжением по времени).
                 const float srcU = u / stretch;
                 if (srcU < 0.0f || srcU >= 1.0f) continue;
                 const int srcIdx = static_cast<int>(srcU
                     * static_cast<float>(ph.lengthSamples));
-                if (srcIdx < 0 || srcIdx >= int(ph.fInstTrace.size())) continue;
+                if (srcIdx < 0
+                    || srcIdx >= int(ph.fInstTrace.size()))
+                    continue;
 
                 const float fInst = ph.fInstTrace[srcIdx] * pitch;
-
-                // Огибающая эха (плавный спад от начала).
                 const float env = std::exp(-u * 1.5f);
 
                 phaseMain += TWO_PI_F * fInst * invFs;
                 if (phaseMain > TWO_PI_F) phaseMain -= TWO_PI_F;
                 float sig = std::sin(phaseMain);
 
-                // В эхо — только 2-я и 3-я гармоники (плотно).
                 for (int k = 0; k < 2 && k < p_.numHarmonics; ++k)
                 {
                     const float fH = fInst * float(k + 2);
@@ -325,18 +210,16 @@ namespace hydro
     }
 
     // ============================================================
-    //  Стрёкот — серия коротких тональных щелчков.
+    //  Стрёкот — серия коротких звонких импульсов.
     //
-    //  Каждый щелчок:
-    //    - основной тон 2000–4000 Гц (внутри полосы свиста);
-    //    - 2-я и 3-я гармоники (до 12000 Гц);
-    //    - очень короткая огибающая (2–5 мс);
-    //    - слабый белый шум поверх.
-    //
-    //  Без фильтров — только прямой синтез.
-    //  Эхо на каждом щелчке — задержка 50 мс, −12 дБ.
+    //  Каждый импульс:
+    //    - основной тон 5000–9000 Гц;
+    //    - 2×, 3×, 4× гармоники (звонкость);
+    //    - короткая огибающая 1–3 мс;
+    //    - эхо на 50 мс, −12 дБ.
     // ============================================================
-    void DolphinWhistleTest::renderCrackleForPhrase(std::vector<float>& buffer, int numSamples, const Phrase& ph)
+    void DolphinWhistleTest::renderCrackleForPhrase(
+        std::vector<float>& buffer, int numSamples, const Phrase& ph)
     {
         if (!ph.hasCrackle) return;
         if (p_.crackleLevel <= 0.0f) return;
@@ -363,7 +246,8 @@ namespace hydro
         std::uniform_real_distribution<float> noiseLevelDist(0.3f, 0.7f);
 
         const int nClicks = nClicksDist(rng_);
-        const float echoGain = std::pow(10.0f, p_.crackleEchoGainDb / 20.0f);
+        const float echoGain = std::pow(10.0f,
+                                        p_.crackleEchoGainDb / 20.0f);
         const int echoDelaySamples = static_cast<int>(
             p_.crackleEchoDelayMs * 0.001f * fs);
 
@@ -400,8 +284,11 @@ namespace hydro
                     sig += 0.5f * std::sin(TWO_PI_F * 2.0f * f0 * tL
                         + phase0 * 1.3f);
                 if (3.0f * f0 < fs * 0.45f)
-                    sig += 0.25f * std::sin(TWO_PI_F * 3.0f * f0 * tL
+                    sig += 0.3f * std::sin(TWO_PI_F * 3.0f * f0 * tL
                         + phase0 * 0.7f);
+                if (4.0f * f0 < fs * 0.45f)
+                    sig += 0.15f * std::sin(TWO_PI_F * 4.0f * f0 * tL
+                        + phase0 * 0.4f);
 
                 const float noise = gauss_(rng_) * noiseLevel;
 
@@ -419,7 +306,7 @@ namespace hydro
     }
 
     // ============================================================
-    //  Шум моря.
+    //  Шум моря — очень тихий, HP-фильтр (без НЧ-гула).
     // ============================================================
     void DolphinWhistleTest::renderSeaNoise(std::vector<float>& buffer,
                                             int numSamples)
@@ -449,6 +336,9 @@ namespace hydro
         }
     }
 
+    // ============================================================
+    //  Главный метод.
+    // ============================================================
     void DolphinWhistleTest::generate(float* out, int numSamples)
     {
         if (numSamples <= 0) return;
@@ -525,16 +415,14 @@ namespace hydro
 
         renderSeaNoise(buffer, numSamples);
 
-        // Основные + альтернативные + эхо + стрёкот.
         for (auto& ph : phrases)
         {
             renderPhrase(buffer, numSamples, ph);
             renderEchoForPhrase(buffer, numSamples, ph);
-            // renderCrackleForPhrase — ОТКЛЮЧЁН.
-            // В эталоне нет импульсов. Стрёкот — это гармоники
-            // свиста, «дышащие» с разными скоростями.
+            renderCrackleForPhrase(buffer, numSamples, ph);
         }
 
+        // --- Нормализация по пику к 0.95 ---
         float maxAbs = 0.0f;
         for (int n = 0; n < numSamples; ++n)
         {

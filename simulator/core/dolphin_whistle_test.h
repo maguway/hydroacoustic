@@ -6,18 +6,18 @@
 // ============================================================
 //  DolphinWhistleTest — модель свиста дельфина.
 //
-//  v8: БОГАТЫЙ ТЕМБР + ЭХО + РАЗМЕРЕННЫЙ СТРЁКОТ.
+//  v9: СВИСТ + ЭХО + СТРЁКОТ (импульсный).
 //
 //  Структура:
 //    1. Начальная тишина.
 //    2. Серия фраз (нисходящие + U-образный + восходящий).
 //    3. Каждая фраза:
-//       - основной тон с вибрато;
-//       - насыщенный спектр: целые + дробные гармоники;
-//       - узкополосный шум вокруг гармоник;
-//       - хвост (уход в низ) с эхом.
-//    4. Стрёкот: размеренный, с эхо на каждом щелчке.
-//    5. Конечная тишина.
+//       - основной тон с ЧМ и вибрато;
+//       - 3 гармоники (2×, 3×, 4×);
+//       - огибающая с плавным входом и выходом.
+//    4. Эхо каждой фразы — задержка 80 мс.
+//    5. Стрёкот — серия коротких звонких импульсов в конце фразы.
+//    6. Конечная тишина.
 // ============================================================
 
 namespace hydro
@@ -54,18 +54,14 @@ namespace hydro
         float riseFrac = 0.15f;
         float fallFrac = 0.25f;
 
-        // --- Тембр (гармоники громче — как в эталоне) ---
+        // --- Тембр ---
         int numHarmonics = 3;
-        float harm1Db = -6.0f; // 2× — почти как основная
-        float harm2Db = -9.0f; // 3× — тоже громко
-        float harm3Db = -13.0f; // 4× — заметно
-        float harm4Db = -18.0f;
-        float fracHarm1Db = -100.0f; // отключено
-        float fracHarm2Db = -100.0f; // отключено
-        float noiseAroundDb = -100.0f; // отключено
-        float noiseBandHz = 60.0f;
+        float harm1Db = -12.0f;
+        float harm2Db = -18.0f;
+        float harm3Db = -24.0f;
+        float harm4Db = -30.0f;
 
-        // --- Вибрато (мягче) ---
+        // --- Вибрато ---
         float vibDepthHz = 10.0f;
         float vibRateHz = 6.0f;
 
@@ -83,7 +79,7 @@ namespace hydro
         float endSilenceMin = 0.3f;
         float endSilenceMax = 0.6f;
 
-        // --- Эхо (одно, плотное) ---
+        // --- Эхо ---
         int echoCount = 1;
         float echoDelayMinMs = 80.0f;
         float echoDelayMaxMs = 80.0f;
@@ -93,19 +89,17 @@ namespace hydro
         float echoPitchFactor = 0.98f;
         float echoStretch = 1.0f;
 
-        // --- Стрёкот: ОТКЛЮЧЁН. Стрёкот — это хвост свиста
-        // с гармониками, а не импульсы. ---
-        float crackleProb = 0.0f;
-        float crackleLevel = 0.0f;
-        int crackleClickMin = 0;
-        int crackleClickMax = 0;
+        // --- Стрёкот (импульсный, звонкий) ---
+        float crackleProb = 1.0f;
+        float crackleLevel = 1.5f;
+        int crackleClickMin = 8;
+        int crackleClickMax = 20;
         float crackleIntervalMinMs = 50.0f;
         float crackleIntervalMaxMs = 150.0f;
-        float crackleDurMinMs = 0.8f;
-        float crackleDurMaxMs = 2.5f;
-        float crackleFreqMin = 4000.0f;
-        float crackleFreqMax = 8000.0f;
-        int crackleEchoCount = 2;
+        float crackleDurMinMs = 1.0f;
+        float crackleDurMaxMs = 3.0f;
+        float crackleFreqMin = 5000.0f;
+        float crackleFreqMax = 9000.0f;
         float crackleEchoDelayMs = 50.0f;
         float crackleEchoGainDb = -12.0f;
 
@@ -140,8 +134,6 @@ namespace hydro
             float phase = 0.0f;
             bool hasCrackle = false;
             PhraseShape shape = PhraseShape::Descending;
-
-            // Сохраняем траекторию F0 для эха.
             std::vector<float> fInstTrace;
         };
 
