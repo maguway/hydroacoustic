@@ -127,43 +127,74 @@ namespace hydro
             if (phaseMain > TWO_PI_F) phaseMain -= TWO_PI_F;
             float sig = std::sin(phaseMain);
 
-            // --- Гармоники: 2×, 3×, 4×, 5× ---
-            // В хвосте 3×, 4×, 5× УСИЛИВАЮТСЯ и получают вибрато.
+            // --- Гармоники: 2×, 3×, 4× ---
+            // Ключевая идея: в хвосте гармоники 3×, 4× ОСТАЮТСЯ
+            // на своей частоте, зафиксированной НА МОМЕНТ ВХОДА в хвост
+            // (не на текущей fBase, которая уходит вниз).
+            // Это даёт «звонкий» высокочастотный хвост — стрёкот.
+
+            // Частота-якорь для хвоста: запоминаем fBase в момент
+            // входа в хвост. Храним как static в текущем вызове —
+            // но проще: вычисляем fBase при u = tailStartFrac.
+            float fBaseAtTailStart;
+            {
+                const float u0 = p_.tailStartFrac;
+                const float s0 = 0.5f * (1.0f - std::cos(PI_F * u0));
+                if (ph.shape == PhraseShape::Descending)
+                    fBaseAtTailStart = ph.fStart + (ph.fEnd - ph.fStart) * s0;
+                else if (ph.shape == PhraseShape::Ascending)
+                    fBaseAtTailStart = ph.fEnd + (ph.fStart - ph.fEnd) * s0;
+                else // UShape
+                {
+                    const float mid = 0.5f * (ph.fStart + ph.fEnd);
+                    if (u0 < 0.5f)
+                    {
+                        const float v = u0 * 2.0f;
+                        const float sv = 0.5f * (1.0f - std::cos(PI_F * v));
+                        fBaseAtTailStart = ph.fStart + (mid - ph.fStart) * sv;
+                    }
+                    else
+                    {
+                        const float v = (u0 - 0.5f) * 2.0f;
+                        const float sv = 0.5f * (1.0f - std::cos(PI_F * v));
+                        fBaseAtTailStart = mid + (ph.fStart - mid) * sv;
+                    }
+                }
+            }
+
             const float gains[3] = {h1, h2, h3};
             for (int k = 0; k < 3; ++k)
             {
-                float fH = fInst * float(k + 2);
-                if (fH >= fs * 0.45f) break;
-
-                // В хвосте 3× и 4× «отвязываются» от основной
-                // и остаются на своей частоте (не уходят вниз).
+                // Базовая частота гармоники.
+                float fH;
                 if (inTail && k >= 1)
                 {
-                    // Фиксируем на частоте начала хвоста.
+                    // В хвосте: 3× и 4× — на «якорной» частоте.
+                    // Медленно сползают на 15% за хвост + лёгкое вибрато.
                     const float uTail = (u - p_.tailStartFrac)
                         / (1.0f - p_.tailStartFrac);
-                    const float fTailStart = fBase * float(k + 2);
-                    const float vibH = 8.0f
+                    const float fAnchor = fBaseAtTailStart * float(k + 2);
+                    const float vibH = 12.0f
                         * std::sin(TWO_PI_F * (5.0f + k) * tLocal);
-                    // Плавно отвязываем: гармоника остаётся на fTailStart.
-                    fH = fTailStart * (1.0f - uTail * 0.5f) + vibH;
+                    fH = fAnchor * (1.0f - uTail * 0.15f) + vibH;
                 }
                 else
                 {
+                    // Вне хвоста: обычная гармоника от текущей fInst.
+                    fH = fInst * float(k + 2);
                     fH += 5.0f * std::sin(TWO_PI_F * (4.0f + k) * tLocal);
                 }
+
+                if (fH >= fs * 0.45f) break;
+                if (fH < 20.0f) fH = 20.0f;
 
                 phaseH[k] += TWO_PI_F * fH * invFs;
                 if (phaseH[k] > TWO_PI_F) phaseH[k] -= TWO_PI_F;
 
-                // Усиление в хвосте для 3×, 4×.
+                // Без усиления в хвосте — гармоники свиста
+                // остаются на своих местах. Стрёкот — отдельно,
+                // в renderCrackleForPhrase.
                 float gain = gains[k];
-                if (inTail && k >= 1)
-                {
-                    const float uTail = (u - p_.tailStartFrac)
-                        / (1.0f - p_.tailStartFrac);
-                    gain *= (1.0f + 2.0f * uTail); // растёт до 3×
-                }
 
                 sig += gain * std::sin(phaseH[k]);
             }
@@ -275,7 +306,6 @@ namespace hydro
         const float fs = p_.fs;
         const float invFs = 1.0f / fs;
 
-        // Начало стрёкота — 55% фразы (в хвосте, но не в самом конце).
         const float crackleStartU = 0.55f;
         const int crackleStart = ph.sampleStart
             + static_cast<int>(ph.lengthSamples * crackleStartU);
@@ -307,14 +337,12 @@ namespace hydro
             const int idx = static_cast<int>(t * fs);
             if (idx < 0 || idx >= numSamples) break;
 
-            // Параметры этого щелчка.
             const float pulseDur = durDist(rng_);
             const int len = static_cast<int>(pulseDur * fs) + 1;
-            const float f0 = freqDist(rng_); // 6000–10000
+            const float f0 = freqDist(rng_);
             const float phase0 = phaseDist(rng_);
             const float noiseLevel = noiseLevelDist(rng_);
 
-            // Считаем число отсчётов эха (то же окно).
             for (int k = 0; k < len; ++k)
             {
                 const int i = idx + k;
@@ -323,14 +351,12 @@ namespace hydro
                 const float tL = static_cast<float>(k) * invFs;
                 const float u = tL / pulseDur;
 
-                // Короткая огибающая: быстрый вход 15%, спад до 85%.
                 float env = 1.0f;
                 if (u < 0.15f)
                     env = u / 0.15f;
                 else
                     env = std::exp(-(u - 0.15f) * 5.0f);
 
-                // Основной тон + 2-я + 3-я гармоники.
                 float sig = std::sin(TWO_PI_F * f0 * tL + phase0);
                 if (2.0f * f0 < fs * 0.45f)
                     sig += 0.5f * std::sin(TWO_PI_F * 2.0f * f0 * tL
@@ -339,19 +365,15 @@ namespace hydro
                     sig += 0.25f * std::sin(TWO_PI_F * 3.0f * f0 * tL
                         + phase0 * 0.7f);
 
-                // Слабый шум поверх.
                 const float noise = gauss_(rng_) * noiseLevel;
 
                 const float s = (sig + noise) * env * p_.crackleLevel;
 
                 buffer[i] += s;
 
-                // Эхо.
                 const int ie = i + echoDelaySamples;
                 if (ie >= 0 && ie < numSamples)
-                {
                     buffer[ie] += s * echoGain;
-                }
             }
 
             t += intervalDist(rng_);
@@ -470,12 +492,7 @@ namespace hydro
         {
             renderPhrase(buffer, numSamples, ph);
             renderEchoForPhrase(buffer, numSamples, ph);
-
-            // renderCrackleForPhrase(buffer, numSamples, ph);
-            // renderCrackleForPhrase — ОТКЛЮЧЕНО.
-            // Стрёкот теперь встроен в renderPhrase (хвост с усиленными
-            // 3×, 4×, 5× гармониками).
-            (void)ph;
+            renderCrackleForPhrase(buffer, numSamples, ph); // ВЕРНУЛИ
         }
 
         float maxAbs = 0.0f;

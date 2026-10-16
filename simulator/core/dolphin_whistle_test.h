@@ -93,17 +93,17 @@ namespace hydro
         float echoPitchFactor = 0.98f;
         float echoStretch = 1.0f;
 
-        // --- Стрёкот (в разы громче, размереннее) ---
-        float crackleProb = 0.0f;      // ОТКЛЮЧЕНО — стрёкот встроен
-        float crackleLevel = 0.0f;
-        int   crackleClickMin = 0;
-        int   crackleClickMax = 0;
-        float crackleIntervalMinMs = 30.0f;
-        float crackleIntervalMaxMs = 50.0f;
-        float crackleDurMinMs = 2.0f;
-        float crackleDurMaxMs = 5.0f;
-        float crackleFreqMin = 2000.0f;
-        float crackleFreqMax = 4000.0f;
+        // --- Стрёкот (возвращаем, громче, короче импульсы, реже) ---
+        float crackleProb = 1.0f;
+        float crackleLevel = 5.0f; // в 10 раз громче прежнего
+        int crackleClickMin = 5;
+        int crackleClickMax = 15;
+        float crackleIntervalMinMs = 50.0f;
+        float crackleIntervalMaxMs = 150.0f;
+        float crackleDurMinMs = 0.8f; // короче — импульс звонче
+        float crackleDurMaxMs = 2.5f;
+        float crackleFreqMin = 4000.0f; // ниже полоса
+        float crackleFreqMax = 8000.0f;
         // Эхо стрёкота
         int crackleEchoCount = 2;
         float crackleEchoDelayMs = 50.0f;
