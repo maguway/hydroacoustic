@@ -227,7 +227,7 @@ namespace hydro
         const float fs = p_.fs;
         const float invFs = 1.0f / fs;
 
-        const float crackleStartU = 0.55f;
+        const float crackleStartU = 0.40f;
         const int crackleStart = ph.sampleStart
             + static_cast<int>(ph.lengthSamples * crackleStartU);
         const int crackleEnd = ph.sampleStart + ph.lengthSamples;
@@ -261,7 +261,7 @@ namespace hydro
 
             const float pulseDur = durDist(rng_);
             const int len = static_cast<int>(pulseDur * fs) + 1;
-            const float f0 = freqDist(rng_);
+            const float f0 = freqDist(rng_);  // freqDist = uniform(crackleFreqMin, crackleFreqMax)
             const float phase0 = phaseDist(rng_);
             const float noiseLevel = noiseLevelDist(rng_);
 
