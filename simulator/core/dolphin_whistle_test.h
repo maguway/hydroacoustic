@@ -91,18 +91,18 @@ namespace hydro
 
         // --- Стрёкот: серия громких звонких щелчков. ---
         float crackleProb = 1.0f;
-        float crackleLevel = 15.0f;
+        float crackleLevel = 60.0f; // было 15
         int crackleClickMin = 15;
         int crackleClickMax = 30;
-        float crackleIntervalMinMs = 30.0f;
-        float crackleIntervalMaxMs = 80.0f;
+        float crackleIntervalMinMs = 10.0f; // было 30
+        float crackleIntervalMaxMs = 30.0f; // было 80
         float crackleDurMinMs = 0.5f;
         float crackleDurMaxMs = 1.5f;
-        float crackleFreqMin = 7000.0f;
-        float crackleFreqMax = 10500.0f;
+        float crackleFreqMin = 1000.0f; // было 7000
+        float crackleFreqMax = 3000.0f; // было 10500
         int crackleEchoCount = 2;
-        float crackleEchoDelayMs = 50.0f;
-        float crackleEchoGainDb = -12.0f;
+        float crackleEchoDelayMs = 400.0f; // было 50
+        float crackleEchoGainDb = -60.0f; // было -12
 
         // --- Шум моря ---
         float seaNoiseLevel = 0.004f;
