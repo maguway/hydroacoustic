@@ -54,12 +54,12 @@ namespace hydro
         float riseFrac = 0.15f;
         float fallFrac = 0.25f;
 
-        // --- Тембр (плотнее, без дробных) ---
+        // --- Тембр (гармоники громче — как в эталоне) ---
         int numHarmonics = 3;
-        float harm1Db = -12.0f;
-        float harm2Db = -18.0f;
-        float harm3Db = -24.0f;
-        float harm4Db = -30.0f;
+        float harm1Db = -6.0f; // 2× — почти как основная
+        float harm2Db = -9.0f; // 3× — тоже громко
+        float harm3Db = -13.0f; // 4× — заметно
+        float harm4Db = -18.0f;
         float fracHarm1Db = -100.0f; // отключено
         float fracHarm2Db = -100.0f; // отключено
         float noiseAroundDb = -100.0f; // отключено
@@ -93,18 +93,18 @@ namespace hydro
         float echoPitchFactor = 0.98f;
         float echoStretch = 1.0f;
 
-        // --- Стрёкот (возвращаем, громче, короче импульсы, реже) ---
-        float crackleProb = 1.0f;
-        float crackleLevel = 5.0f; // в 10 раз громче прежнего
-        int crackleClickMin = 5;
-        int crackleClickMax = 15;
+        // --- Стрёкот: ОТКЛЮЧЁН. Стрёкот — это хвост свиста
+        // с гармониками, а не импульсы. ---
+        float crackleProb = 0.0f;
+        float crackleLevel = 0.0f;
+        int crackleClickMin = 0;
+        int crackleClickMax = 0;
         float crackleIntervalMinMs = 50.0f;
         float crackleIntervalMaxMs = 150.0f;
-        float crackleDurMinMs = 0.8f; // короче — импульс звонче
+        float crackleDurMinMs = 0.8f;
         float crackleDurMaxMs = 2.5f;
-        float crackleFreqMin = 4000.0f; // ниже полоса
+        float crackleFreqMin = 4000.0f;
         float crackleFreqMax = 8000.0f;
-        // Эхо стрёкота
         int crackleEchoCount = 2;
         float crackleEchoDelayMs = 50.0f;
         float crackleEchoGainDb = -12.0f;

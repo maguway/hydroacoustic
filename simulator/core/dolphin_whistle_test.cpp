@@ -174,8 +174,7 @@ namespace hydro
                     const float uTail = (u - p_.tailStartFrac)
                         / (1.0f - p_.tailStartFrac);
                     const float fAnchor = fBaseAtTailStart * float(k + 2);
-                    const float vibH = 12.0f
-                        * std::sin(TWO_PI_F * (5.0f + k) * tLocal);
+                    const float vibH = 25.0f * std::sin(TWO_PI_F * (5.0f + k) * tLocal);
                     fH = fAnchor * (1.0f - uTail * 0.15f) + vibH;
                 }
                 else
@@ -191,10 +190,17 @@ namespace hydro
                 phaseH[k] += TWO_PI_F * fH * invFs;
                 if (phaseH[k] > TWO_PI_F) phaseH[k] -= TWO_PI_F;
 
-                // Без усиления в хвосте — гармоники свиста
-                // остаются на своих местах. Стрёкот — отдельно,
-                // в renderCrackleForPhrase.
+                // В хвосте гармоники 2×, 3×, 4× УСИЛИВАЮТСЯ
+                // до уровня основной — это и есть стрёкот дельфина.
+                // Они остаются на высоких частотах (в отличие от основной).
                 float gain = gains[k];
+                if (inTail && k >= 0)
+                {
+                    const float uTail = (u - p_.tailStartFrac)
+                        / (1.0f - p_.tailStartFrac);
+                    // Растёт до 3× к концу хвоста.
+                    gain *= (1.0f + 2.0f * uTail);
+                }
 
                 sig += gain * std::sin(phaseH[k]);
             }
@@ -492,7 +498,9 @@ namespace hydro
         {
             renderPhrase(buffer, numSamples, ph);
             renderEchoForPhrase(buffer, numSamples, ph);
-            renderCrackleForPhrase(buffer, numSamples, ph); // ВЕРНУЛИ
+            // renderCrackleForPhrase — не нужен.
+            // Стрёкот — это хвост свиста (усиленные гармоники
+            // при уходе F0 в низ), а не отдельные импульсы.
         }
 
         float maxAbs = 0.0f;
