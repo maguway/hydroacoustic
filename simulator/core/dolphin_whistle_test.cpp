@@ -174,18 +174,24 @@ namespace hydro
             //  Каждая гармоника «дышит» своей частотой и глубиной.
             //  Это даёт «живой» стрёкот, а не «звон».
             // ============================================================
+            // ============================================================
+            //  Гармоники 2×, 3×, 4× — с «живой» амплитудной модуляцией.
+            //
+            //  Из эталона: в хвосте 2× выходит на −6…+2 дБ,
+            //  3× — на −15…−25, 4× — на −15…+2. Уровни «дышат».
+            //
+            //  Фазы AM жёстко разнесены, чтобы гармоники
+            //  не складывались в один «звон».
+            // ============================================================
             const float gains[3] = {h1, h2, h3};
 
-            // Скорости AM для каждой гармоники (Гц) — разные, чтобы
-            // они не складывались в одну пульсацию.
             const float amRate[3] = {2.3f, 4.1f, 7.7f};
-            // Глубины AM.
-            const float amDepth[3] = {0.30f, 0.50f, 0.80f};
-            // Фазовые сдвиги, чтобы модуляции не были синхронны.
-            const float amPhase[3] = {0.0f, 1.3f, 2.7f};
+            const float amDepth[3] = {0.40f, 0.55f, 0.80f};
+            const float amPhase[3] = {0.0f, 2.1f, 4.2f}; // разнесены
 
-            // Целевые уровни в хвосте: 2× −10 дБ, 3× −20 дБ, 4× −8 дБ.
-            const float targetDb[3] = {-10.0f, -20.0f, -8.0f};
+            // Целевые уровни в хвосте (громче, чем сейчас).
+            // Из эталона: 2× ~ +2 дБ, 3× ~ −5 дБ, 4× ~ +2 дБ.
+            const float targetDb[3] = {+2.0f, -5.0f, +2.0f};
             const float targetLin[3] = {
                 std::pow(10.0f, targetDb[0] / 20.0f),
                 std::pow(10.0f, targetDb[1] / 20.0f),
@@ -197,19 +203,15 @@ namespace hydro
                 float fH;
                 if (inTail)
                 {
-                    // В хвосте: гармоники «отвязываются» от основной
-                    // и держатся на своей частоте (медленно сползая).
                     const float uTail = (u - p_.tailStartFrac)
                         / (1.0f - p_.tailStartFrac);
                     const float fAnchor = fBaseAtTailStart * float(k + 2);
-                    // Небольшое дрожание частоты (ЧМ).
                     const float vibH = 8.0f
                         * std::sin(TWO_PI_F * (4.0f + k) * tLocal);
                     fH = fAnchor * (1.0f - uTail * 0.10f) + vibH;
                 }
                 else
                 {
-                    // Вне хвоста: обычная гармоника от текущей fInst.
                     fH = fInst * float(k + 2);
                     fH += 4.0f * std::sin(TWO_PI_F * (3.0f + k) * tLocal);
                 }
@@ -220,29 +222,19 @@ namespace hydro
                 phaseH[k] += TWO_PI_F * fH * invFs;
                 if (phaseH[k] > TWO_PI_F) phaseH[k] -= TWO_PI_F;
 
-                // AM для каждой гармоники.
+                // AM с разнесёнными фазами.
                 const float am_k = 1.0f
                     - amDepth[k] * 0.5f
                     + amDepth[k] * 0.5f
-                    * std::sin(TWO_PI_F * amRate[k] * tLocal + amPhase[k]);
+                    * std::sin(TWO_PI_F * amRate[k] * tLocal
+                        + amPhase[k]);
 
-                // Целевой gain: в хвосте — «плавный переход»
-                // от базового к целевому, с AM.
-                float gain;
-                if (inTail)
-                {
-                    const float uTail = (u - p_.tailStartFrac)
-                        / (1.0f - p_.tailStartFrac);
-                    // Переход от базового уровня к целевому за 30% хвоста.
-                    const float transition = std::min(1.0f, uTail / 0.30f);
-                    const float gTarget = targetLin[k] * am_k;
-                    gain = gains[k] * (1.0f - transition)
-                        + gTarget * transition;
-                }
-                else
-                {
-                    gain = gains[k];
-                }
+                // Gain: линейно растёт от начала фразы к концу.
+                // НЕ зависит от inTail — гармоники усиливаются ВСЮ фразу.
+                const float rampUp = u; // 0 → 1 по всей фразе
+                const float gTarget = targetLin[k] * am_k;
+                const float gain = gains[k] * (1.0f - rampUp)
+                    + gTarget * rampUp;
 
                 sig += gain * std::sin(phaseH[k]);
             }
