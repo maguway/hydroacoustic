@@ -119,7 +119,8 @@ namespace hydro
             if (phaseMain > TWO_PI_F) phaseMain -= TWO_PI_F;
             float sig = std::sin(phaseMain);
 
-            // --- Гармоники ---
+            // Гармоники 2×, 3×, 4× — простые, тихие.
+            // Стрёкот делается отдельно, в renderCrackleForPhrase.
             const float gains[3] = {h1, h2, h3};
             for (int k = 0; k < 3; ++k)
             {
@@ -243,7 +244,7 @@ namespace hydro
         std::uniform_real_distribution<float> freqDist(
             p_.crackleFreqMin, p_.crackleFreqMax);
         std::uniform_real_distribution<float> phaseDist(0.0f, TWO_PI_F);
-        std::uniform_real_distribution<float> noiseLevelDist(0.3f, 0.7f);
+        std::uniform_real_distribution<float> noiseLevelDist(0.05f, 0.15f);
 
         const int nClicks = nClicksDist(rng_);
         const float echoGain = std::pow(10.0f,
@@ -261,7 +262,7 @@ namespace hydro
 
             const float pulseDur = durDist(rng_);
             const int len = static_cast<int>(pulseDur * fs) + 1;
-            const float f0 = freqDist(rng_);  // freqDist = uniform(crackleFreqMin, crackleFreqMax)
+            const float f0 = freqDist(rng_); // freqDist = uniform(crackleFreqMin, crackleFreqMax)
             const float phase0 = phaseDist(rng_);
             const float noiseLevel = noiseLevelDist(rng_);
 
@@ -277,17 +278,17 @@ namespace hydro
                 if (u < 0.15f)
                     env = u / 0.15f;
                 else
-                    env = std::exp(-(u - 0.15f) * 5.0f);
+                    env = std::exp(-(u - 0.15f) * 8.0f);
 
                 float sig = std::sin(TWO_PI_F * f0 * tL + phase0);
                 if (2.0f * f0 < fs * 0.45f)
-                    sig += 0.5f * std::sin(TWO_PI_F * 2.0f * f0 * tL
+                    sig += 0.9f * std::sin(TWO_PI_F * 2.0f * f0 * tL
                         + phase0 * 1.3f);
                 if (3.0f * f0 < fs * 0.45f)
-                    sig += 0.3f * std::sin(TWO_PI_F * 3.0f * f0 * tL
+                    sig += 0.7f * std::sin(TWO_PI_F * 3.0f * f0 * tL
                         + phase0 * 0.7f);
                 if (4.0f * f0 < fs * 0.45f)
-                    sig += 0.15f * std::sin(TWO_PI_F * 4.0f * f0 * tL
+                    sig += 0.5f * std::sin(TWO_PI_F * 4.0f * f0 * tL
                         + phase0 * 0.4f);
 
                 const float noise = gauss_(rng_) * noiseLevel;
