@@ -211,13 +211,22 @@ namespace hydro
     }
 
     // ============================================================
-    //  Стрёкот — серия коротких звонких импульсов.
+    //  Стрёкот — НОВАЯ АРХИТЕКТУРА.
     //
-    //  Каждый импульс:
-    //    - основной тон 5000–9000 Гц;
-    //    - 2×, 3×, 4× гармоники (звонкость);
-    //    - короткая огибающая 1–3 мс;
-    //    - эхо на 50 мс, −12 дБ.
+    //  Пульсирующий звонкий тембр в конце фразы.
+    //
+    //  carrier(t) = сумма гармоник от crackleBaseHz:
+    //                 f0, 2*f0, 3*f0, ... до crackleNumHarm
+    //                 с убыванием амплитуд (crackleHarmDecay^k)
+    //
+    //  AM(t) = 1 - depth/2 + depth/2 * sin(2*pi*pulseHz*t)
+    //          где pulseHz — случайно в [cracklePulseHzMin, cracklePulseHzMax]
+    //
+    //  env(t) — плавный вход (crackleRiseFrac) и выход (crackleFallFrac)
+    //          по краям серии.
+    //
+    //  Серия начинается с crackleStartU фразы и идёт до конца фразы.
+    //  Накладывается на свист — не заменяет его.
     // ============================================================
     void DolphinWhistleTest::renderCrackleForPhrase(
         std::vector<float>& buffer, int numSamples, const Phrase& ph)
@@ -228,81 +237,77 @@ namespace hydro
         const float fs = p_.fs;
         const float invFs = 1.0f / fs;
 
-        const float crackleStartU = 0.40f;
+        // Начало стрёкота — с crackleStartU фразы, до конца.
         const int crackleStart = ph.sampleStart
-            + static_cast<int>(ph.lengthSamples * crackleStartU);
+            + static_cast<int>(ph.lengthSamples * p_.crackleStartU);
         const int crackleEnd = ph.sampleStart + ph.lengthSamples;
 
-        std::uniform_int_distribution<int> nClicksDist(
-            p_.crackleClickMin, p_.crackleClickMax);
-        std::uniform_real_distribution<float> intervalDist(
-            p_.crackleIntervalMinMs * 0.001f,
-            p_.crackleIntervalMaxMs * 0.001f);
-        std::uniform_real_distribution<float> durDist(
-            p_.crackleDurMinMs * 0.001f,
-            p_.crackleDurMaxMs * 0.001f);
-        std::uniform_real_distribution<float> freqDist(
-            p_.crackleFreqMin, p_.crackleFreqMax);
+        const int totalLen = crackleEnd - crackleStart;
+        if (totalLen <= 0) return;
+
+        const float totalDurSec = static_cast<float>(totalLen) * invFs;
+
+        // --- Параметры этой серии (случайные) ---
+        std::uniform_real_distribution<float> pulseDist(
+            p_.cracklePulseHzMin, p_.cracklePulseHzMax);
         std::uniform_real_distribution<float> phaseDist(0.0f, TWO_PI_F);
-        std::uniform_real_distribution<float> noiseLevelDist(0.05f, 0.15f);
 
-        const int nClicks = nClicksDist(rng_);
-        const float echoGain = std::pow(10.0f,
-                                        p_.crackleEchoGainDb / 20.0f);
-        const int echoDelaySamples = static_cast<int>(
-            p_.crackleEchoDelayMs * 0.001f * fs);
+        const float pulseHz = pulseDist(rng_);
+        const float pulsePhase = phaseDist(rng_);
 
-        float t = static_cast<float>(crackleStart) * invFs;
-        const float tEnd = static_cast<float>(crackleEnd) * invFs;
+        // --- Гармоники тембра ---
+        const int nHarm = std::max(1, p_.crackleNumHarm);
+        const float f0 = p_.crackleBaseHz;
 
-        for (int c = 0; c < nClicks && t < tEnd; ++c)
+        // Фазы гармоник — случайные, чтобы не было «синфазного» пика.
+        std::vector<float> harmPhase(nHarm);
+        for (int k = 0; k < nHarm; ++k)
+            harmPhase[k] = phaseDist(rng_);
+
+        // --- Рендер ---
+        float phasePulse = pulsePhase;
+
+        for (int n = 0; n < totalLen; ++n)
         {
-            const int idx = static_cast<int>(t * fs);
-            if (idx < 0 || idx >= numSamples) break;
+            const int idx = crackleStart + n;
+            if (idx < 0 || idx >= numSamples) continue;
 
-            const float pulseDur = durDist(rng_);
-            const int len = static_cast<int>(pulseDur * fs) + 1;
-            const float f0 = freqDist(rng_); // freqDist = uniform(crackleFreqMin, crackleFreqMax)
-            const float phase0 = phaseDist(rng_);
-            const float noiseLevel = noiseLevelDist(rng_);
+            const float tLocal = static_cast<float>(n) * invFs;
+            const float u = tLocal / totalDurSec; // 0..1
 
-            for (int k = 0; k < len; ++k)
+            // --- Огибающая серии ---
+            float env = 1.0f;
+            if (u < p_.crackleRiseFrac)
+                env = 0.5f * (1.0f - std::cos(PI_F * u
+                    / p_.crackleRiseFrac));
+            else if (u > 1.0f - p_.crackleFallFrac)
             {
-                const int i = idx + k;
-                if (i < 0 || i >= numSamples) break;
-
-                const float tL = static_cast<float>(k) * invFs;
-                const float u = tL / pulseDur;
-
-                float env = 1.0f;
-                if (u < 0.15f)
-                    env = u / 0.15f;
-                else
-                    env = std::exp(-(u - 0.15f) * 8.0f);
-
-                float sig = std::sin(TWO_PI_F * f0 * tL + phase0);
-                if (2.0f * f0 < fs * 0.45f)
-                    sig += 0.9f * std::sin(TWO_PI_F * 2.0f * f0 * tL
-                        + phase0 * 1.3f);
-                if (3.0f * f0 < fs * 0.45f)
-                    sig += 0.7f * std::sin(TWO_PI_F * 3.0f * f0 * tL
-                        + phase0 * 0.7f);
-                if (4.0f * f0 < fs * 0.45f)
-                    sig += 0.5f * std::sin(TWO_PI_F * 4.0f * f0 * tL
-                        + phase0 * 0.4f);
-
-                const float noise = gauss_(rng_) * noiseLevel;
-
-                const float s = (sig + noise) * env * p_.crackleLevel;
-
-                buffer[i] += s;
-
-                const int ie = i + echoDelaySamples;
-                if (ie >= 0 && ie < numSamples)
-                    buffer[ie] += s * echoGain;
+                const float v = (1.0f - u) / p_.crackleFallFrac;
+                env = 0.5f * (1.0f - std::cos(PI_F * v));
             }
 
-            t += intervalDist(rng_);
+            // --- Пульсация (AM) ---
+            const float am = 1.0f
+                - p_.cracklePulseDepth * 0.5f
+                + p_.cracklePulseDepth * 0.5f
+                * std::sin(TWO_PI_F * pulseHz * tLocal
+                    + pulsePhase);
+
+            // --- Carrier: сумма гармоник ---
+            float carrier = 0.0f;
+            float decay = 1.0f;
+            for (int k = 1; k <= nHarm; ++k)
+            {
+                const float fH = f0 * static_cast<float>(k);
+                if (fH >= fs * 0.45f) break;
+
+                carrier += decay * std::sin(
+                    TWO_PI_F * fH * tLocal + harmPhase[k - 1]);
+                decay *= p_.crackleHarmDecay;
+            }
+
+            // --- Сумма в буфер ---
+            buffer[idx] += carrier * am * env * p_.crackleLevel;
         }
     }
 

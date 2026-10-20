@@ -89,20 +89,48 @@ namespace hydro
         float echoPitchFactor = 0.98f;
         float echoStretch = 1.0f;
 
-        // --- Стрёкот: серия громких звонких щелчков. ---
+        // --- Стрёкот: НОВАЯ АРХИТЕКТУРА (пульсирующий звонкий тембр).
+        //
+        //  Не серия импульсов, а непрерывный сигнал:
+        //    carrier = сумма гармоник от crackleBaseHz;
+        //    AM      = пульсация с cracklePulseHz;
+        //    env     = огибающая по краям серии.
+        //
+        //  Стрёкот «накладывается» на конец фразы:
+        //  начинается с crackleStartU, идёт до конца фразы.
+        // ---
         float crackleProb = 1.0f;
-        float crackleLevel = 60.0f; // было 15
+        float crackleLevel = 1.0f; // подобрать
+
+        // Пульсация (трещание).
+        float cracklePulseHzMin = 30.0f; // Гц
+        float cracklePulseHzMax = 50.0f;
+        float cracklePulseDepth = 0.7f; // глубина AM (0..1)
+
+        // Тембр (звонкость).
+        float crackleBaseHz = 300.0f; // основная тембра, Гц
+        int crackleNumHarm = 8; // число гармоник тембра
+        float crackleHarmDecay = 0.6f; // убывание гармоник
+
+        // Где начинается стрёкот (доля фразы).
+        float crackleStartU = 0.40f;
+
+        // Огибающая серии (плавный вход/выход).
+        float crackleRiseFrac = 0.10f; // 10% на вход
+        float crackleFallFrac = 0.20f; // 20% на выход
+
+        // --- СТАРЫЕ ПАРАМЕТРЫ (не используются, оставлены для совместимости) ---
         int crackleClickMin = 15;
         int crackleClickMax = 30;
-        float crackleIntervalMinMs = 10.0f; // было 30
-        float crackleIntervalMaxMs = 30.0f; // было 80
+        float crackleIntervalMinMs = 10.0f;
+        float crackleIntervalMaxMs = 30.0f;
         float crackleDurMinMs = 0.5f;
         float crackleDurMaxMs = 1.5f;
-        float crackleFreqMin = 1000.0f; // было 7000
-        float crackleFreqMax = 3000.0f; // было 10500
+        float crackleFreqMin = 1000.0f;
+        float crackleFreqMax = 3000.0f;
         int crackleEchoCount = 2;
-        float crackleEchoDelayMs = 400.0f; // было 50
-        float crackleEchoGainDb = -60.0f; // было -12
+        float crackleEchoDelayMs = 400.0f;
+        float crackleEchoGainDb = -60.0f;
 
         // --- Шум моря ---
         float seaNoiseLevel = 0.004f;
