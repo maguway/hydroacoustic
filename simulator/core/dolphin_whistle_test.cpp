@@ -285,7 +285,7 @@ namespace hydro
                 if (u < 0.15f)
                     env = u / 0.15f;
                 else
-                    env = std::exp(-(u - 0.15f) * 8.0f);
+                    env = std::exp(-(u - 0.15f) * 15.0f);
 
                 float sig = std::sin(TWO_PI_F * f0 * tL + phase0);
                 if (2.0f * f0 < fs * 0.45f)
