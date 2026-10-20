@@ -232,7 +232,6 @@ namespace hydro
         const int crackleStart = ph.sampleStart
             + static_cast<int>(ph.lengthSamples * crackleStartU);
         const int crackleEnd = ph.sampleStart + ph.lengthSamples;
-        std::uniform_real_distribution<float> uniform01(0.0f, 1.0f);
 
         std::uniform_int_distribution<int> nClicksDist(
             p_.crackleClickMin, p_.crackleClickMax);
@@ -256,12 +255,6 @@ namespace hydro
         float t = static_cast<float>(crackleStart) * invFs;
         const float tEnd = static_cast<float>(crackleEnd) * invFs;
 
-        // --- Частота «едет» по серии ---
-        const float f0Start = freqDist(rng_);
-        const float f0End = f0Start * (1.0f + p_.crackleSweepFrac * uniform01(rng_));
-        const float f0Step = (f0End - f0Start)
-            / float(std::max(1, nClicks));
-
         for (int c = 0; c < nClicks && t < tEnd; ++c)
         {
             const int idx = static_cast<int>(t * fs);
@@ -269,7 +262,7 @@ namespace hydro
 
             const float pulseDur = durDist(rng_);
             const int len = static_cast<int>(pulseDur * fs) + 1;
-            const float f0 = f0Start + f0Step * float(c);
+            const float f0 = freqDist(rng_); // freqDist = uniform(crackleFreqMin, crackleFreqMax)
             const float phase0 = phaseDist(rng_);
             const float noiseLevel = noiseLevelDist(rng_);
 
@@ -285,7 +278,7 @@ namespace hydro
                 if (u < 0.15f)
                     env = u / 0.15f;
                 else
-                    env = std::exp(-(u - 0.15f) * 15.0f);
+                    env = std::exp(-(u - 0.15f) * 8.0f);
 
                 float sig = std::sin(TWO_PI_F * f0 * tL + phase0);
                 if (2.0f * f0 < fs * 0.45f)

@@ -96,14 +96,13 @@ namespace hydro
         int crackleClickMax = 30;
         float crackleIntervalMinMs = 10.0f; // было 30
         float crackleIntervalMaxMs = 30.0f; // было 80
-        float crackleDurMinMs = 0.3f;
-        float crackleDurMaxMs = 1.0f;
+        float crackleDurMinMs = 0.5f;
+        float crackleDurMaxMs = 1.5f;
         float crackleFreqMin = 1000.0f; // было 7000
         float crackleFreqMax = 3000.0f; // было 10500
-        float crackleSweepFrac = 0.15f; // Насколько частота растёт за серию (0.15 = +15%).
         int crackleEchoCount = 2;
         float crackleEchoDelayMs = 400.0f; // было 50
-        float crackleEchoGainDb = -100.0f; // было -12
+        float crackleEchoGainDb = -60.0f; // было -12
 
         // --- Шум моря ---
         float seaNoiseLevel = 0.004f;
