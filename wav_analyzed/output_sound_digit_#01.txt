@@ -1,0 +1,1370 @@
+// files\sound_digit\CMakeLists.txt
+cmake_minimum_required(VERSION 3.20)
+project(sound_digit LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
+endif()
+
+add_executable(sound_digit
+        src/main.cpp
+        src/wav_loader.cpp
+        src/fft.cpp
+        src/map.cpp
+        src/events.cpp
+        src/detail.cpp
+)
+
+target_include_directories(sound_digit PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+
+
+
+// files\sound_digit\.idea\.gitignore
+# Default ignored files
+/shelf/
+/workspace.xml
+# Editor-based HTTP Client requests
+/httpRequests/
+# Ignored default folder with query files
+/queries/
+# Datasource local storage ignored files
+/dataSources/
+/dataSources.local.xml
+
+
+
+
+
+// files\sound_digit\.idea\misc.xml
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="CMakePythonSetting">
+    <option name="pythonIntegrationState" value="YES" />
+  </component>
+  <component name="CMakeWorkspace" PROJECT_DIR="$PROJECT_DIR$" />
+</project>
+
+
+
+
+// files\sound_digit\.idea\modules.xml
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ProjectModuleManager">
+    <modules>
+      <module fileurl="file://$PROJECT_DIR$/.idea/sound_digit.iml" filepath="$PROJECT_DIR$/.idea/sound_digit.iml" />
+    </modules>
+  </component>
+</project>
+
+
+
+
+// files\sound_digit\.idea\sound_digit.iml
+<?xml version="1.0" encoding="UTF-8"?>
+<module classpath="CIDR" type="CPP_MODULE" version="4" />
+
+
+
+
+// files\sound_digit\.idea\workspace.xml
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="SELECTIVE" />
+  </component>
+  <component name="CMakePresetLoader">{
+  &quot;useNewFormat&quot;: true
+}</component>
+  <component name="CMakeProjectFlavorService">
+    <option name="flavorId" value="CMakePlainProjectFlavor" />
+  </component>
+  <component name="CMakeReloadState">
+    <option name="reloaded" value="true" />
+  </component>
+  <component name="CMakeRunConfigurationManager">
+    <generated>
+      <config projectName="sound_digit" targetName="sound_digit" />
+    </generated>
+  </component>
+  <component name="CMakeSettings">
+    <configurations>
+      <configuration PROFILE_NAME="Debug" ENABLED="true" CONFIG_NAME="Debug" />
+    </configurations>
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="323b6779-0715-4629-bbdb-2fb263e3802a" name="Changes" comment="" />
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="ClangdSettings">
+    <option name="formatViaClangd" value="false" />
+  </component>
+  <component name="CurrentDebugProfile">
+    <option name="debugProfileId" value="1210decf-1fb1-4531-bd2f-6f13176fc217" />
+  </component>
+  <component name="ExecutionTargetManager" SELECTED_TARGET="CMakeBuildProfile:Debug" />
+  <component name="MacroExpansionManager">
+    <option name="directoryName" value="jtktuide" />
+  </component>
+  <component name="ProjectApplicationVersion">
+    <option name="ide" value="CLion" />
+    <option name="majorVersion" value="2026" />
+    <option name="minorVersion" value="2" />
+    <option name="productBranch" value="Classic" />
+  </component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 3
+}</component>
+  <component name="ProjectId" id="3KSJ3GtMQ3nGvNQOBDZiBloGphE" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;CMake Application.sound_digit.executor&quot;: &quot;Run&quot;,
+    &quot;CidrDebugProfileConversion&quot;: &quot;true&quot;,
+    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.RadMigrateCodeStyle&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.cidr.known.project.marker&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.readMode.enableVisualFormatting&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.west.config.association.type.startup.service&quot;: &quot;true&quot;,
+    &quot;cf.first.check.clang-format&quot;: &quot;false&quot;,
+    &quot;cidr.known.project.marker&quot;: &quot;true&quot;,
+    &quot;codeWithMe.voiceChat.enabledByDefault&quot;: &quot;false&quot;,
+    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
+    &quot;org.rust.first.attach.projects&quot;: &quot;true&quot;
+  }
+}</component>
+  <component name="RunManager">
+    <configuration name="sound_digit" type="CMakeRunConfiguration" factoryName="Application" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" EMULATE_TERMINAL="false" PASS_PARENT_ENVS_2="true" PROJECT_NAME="sound_digit" TARGET_NAME="sound_digit" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="sound_digit" RUN_TARGET_NAME="sound_digit">
+      <method v="2">
+        <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
+      </method>
+    </configuration>
+  </component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="323b6779-0715-4629-bbdb-2fb263e3802a" name="Changes" comment="" />
+      <created>1791544834935</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1791544834935</updated>
+    </task>
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
+  </component>
+  <component name="VCPKGProject">
+    <isAutomaticCheckingOnLaunch value="false" />
+    <isAutomaticFoundErrors value="true" />
+    <isAutomaticReloadCMake value="true" />
+    <isAutomaticBootstrapAfterUpdate value="false" />
+  </component>
+</project>
+
+
+
+
+// files\sound_digit\src\detail.cpp
+#include "detail.h"
+#include "fft.h"
+
+#include <cmath>
+#include <iomanip>
+#include <vector>
+#include <algorithm>
+#include <complex>
+
+namespace sd
+{
+    namespace
+    {
+        constexpr float PI_F = 3.14159265358979323846f;
+        constexpr float TWO_PI_F = 6.28318530717958647692f;
+
+        // ============================================================
+        //  ДЕТАЛИ — параметры (универсальные)
+        // ============================================================
+
+        constexpr int FRAME_HOP_MS = 5; // для деталей — мелкий шаг
+        constexpr int FFT_WIN = 1024;
+
+        constexpr float F0_MIN_HZ = 100.0f;
+        constexpr float F0_MAX_HZ = 8000.0f;
+
+        constexpr float HARMONIC_THR_TONE = 0.30f;
+        constexpr float SILENCE_OFFSET_DB = 12.0f;
+
+        constexpr double MIN_EVENT_MS = 100.0;
+
+        constexpr float AUTOCORR_MIN = 0.30f;
+        constexpr int MEDIAN_WIN = 5;
+
+        // Порог, с которого печатаем детали.
+        constexpr double DETAIL_MIN_DUR_MS = 100.0;
+
+        // Разбиение длинных TONE (как в events).
+        constexpr float SUBEVENT_F0_JUMP = 0.25f;
+        constexpr double MIN_SUBEVENT_MS = 80.0;
+
+        // Порог STR.
+        constexpr float STR_FREQ_FRAC = 0.60f;
+
+        // ============================================================
+
+        struct Frame
+        {
+            double tMs;
+            float levelDb;
+            float f0Hz;
+            float harmonic;
+            float highFrac;
+            const char* type;
+        };
+
+        struct Harm
+        {
+            float freq;
+            float relDb; // относительно основной
+        };
+
+        std::vector<std::pair<int, float>>
+        findPeaks(const std::vector<float>& mag, float maxMag, float floorDb)
+        {
+            std::vector<std::pair<int, float>> peaks;
+            const int half = int(mag.size());
+            for (int k = 2; k < half - 1; ++k)
+            {
+                if (mag[k] > mag[k - 1] && mag[k] > mag[k + 1])
+                {
+                    const float db = 20.0f * std::log10(mag[k] / maxMag + 1e-9f);
+                    if (db < floorDb) continue;
+                    peaks.push_back({k, mag[k]});
+                }
+            }
+            return peaks;
+        }
+
+        float estimateF0Autocorr(const std::vector<float>& samples,
+                                 int sr, float fMin, float fMax,
+                                 float& outCorr)
+        {
+            outCorr = 0.0f;
+            const int n = int(samples.size());
+            if (n < 64) return 0.0f;
+
+            double mean = 0.0;
+            for (float v : samples) mean += v;
+            mean /= double(n);
+
+            std::vector<float> x(n);
+            for (int i = 0; i < n; ++i) x[i] = float(samples[i] - mean);
+
+            double energy = 0.0;
+            for (int i = 0; i < n; ++i) energy += double(x[i]) * x[i];
+            if (energy < 1e-12) return 0.0f;
+
+            const int lagMin = std::max(2, int(float(sr) / fMax));
+            const int lagMax = std::min(n / 2, int(float(sr) / fMin));
+            if (lagMax <= lagMin) return 0.0f;
+
+            float bestLag = 0.0f, bestCorr = 0.0f;
+            for (int lag = lagMin; lag <= lagMax; ++lag)
+            {
+                double sum = 0.0;
+                for (int i = 0; i + lag < n; ++i)
+                    sum += double(x[i]) * x[i + lag];
+                const float corr = float(sum / energy);
+                if (corr > bestCorr && corr > AUTOCORR_MIN)
+                {
+                    bestCorr = corr;
+                    bestLag = float(lag);
+                }
+            }
+            if (bestLag <= 0.0f) return 0.0f;
+            outCorr = bestCorr;
+            return float(sr) / bestLag;
+        }
+
+        float estimateHarmonicity(const std::vector<float>& mag,
+                                  float maxMag, int sr, int fftSize,
+                                  float fMin, float fMax)
+        {
+            auto peaks = findPeaks(mag, maxMag, -40.0f);
+            if (peaks.size() < 2) return 0.0f;
+            const float binHz = float(sr) / float(fftSize);
+            int totalChecked = 0, harmonicCount = 0;
+            for (const auto& p : peaks)
+            {
+                const float f1 = float(p.first) * binHz;
+                if (f1 < fMin || f1 > fMax) continue;
+                ++totalChecked;
+                bool has2 = false, has3 = false;
+                for (const auto& q : peaks)
+                {
+                    const float f2 = float(q.first) * binHz;
+                    const float r2 = f2 / f1;
+                    if (std::fabs(r2 - 2.0f) < 0.10f) has2 = true;
+                    if (std::fabs(r2 - 3.0f) < 0.10f) has3 = true;
+                }
+                if (has2 || has3) ++harmonicCount;
+            }
+            if (totalChecked == 0) return 0.0f;
+            return float(harmonicCount) / float(totalChecked);
+        }
+
+        float computeHighFrac(const std::vector<float>& mag, int sr, int fftSize,
+                              float boundaryHz)
+        {
+            const int half = int(mag.size());
+            const float binHz = float(sr) / float(fftSize);
+            const int kb = std::max(1, int(boundaryHz / binHz));
+            double eLow = 0.0, eHigh = 0.0;
+            for (int k = 2; k < half; ++k)
+            {
+                const double e = double(mag[k]) * mag[k];
+                if (k < kb) eLow += e;
+                else eHigh += e;
+            }
+            const double eTot = eLow + eHigh;
+            if (eTot < 1e-20) return 0.0f;
+            return float(eHigh / eTot);
+        }
+
+        const char* classify(float levelDb, float silenceThr,
+                             float f0, float harmonic, float highFrac,
+                             float fMax)
+        {
+            if (levelDb < silenceThr) return "SILENCE";
+            if (harmonic >= HARMONIC_THR_TONE)
+            {
+                if (f0 > fMax * STR_FREQ_FRAC) return "STR";
+                if (f0 == 0.0f && highFrac > 0.75f) return "STR";
+                return "TONE";
+            }
+            if (highFrac > 0.75f) return "STR";
+            return "NOISE";
+        }
+
+        void smoothFrames(std::vector<Frame>& frames)
+        {
+            const int n = int(frames.size());
+            if (n < 4) return;
+            for (int pass = 0; pass < 2; ++pass)
+            {
+                for (int i = 1; i < n - 1; ++i)
+                {
+                    if (frames[i].type != frames[i - 1].type
+                        && frames[i].type != frames[i + 1].type)
+                    {
+                        frames[i].type = frames[i - 1].type;
+                    }
+                }
+            }
+        }
+
+        void medianFilterF0(std::vector<Frame>& frames)
+        {
+            const int n = int(frames.size());
+            if (n < MEDIAN_WIN) return;
+            std::vector<float> src(n);
+            for (int i = 0; i < n; ++i) src[i] = frames[i].f0Hz;
+            const int half = MEDIAN_WIN / 2;
+            std::vector<float> win;
+            win.reserve(MEDIAN_WIN);
+            for (int i = 0; i < n; ++i)
+            {
+                win.clear();
+                for (int j = -half; j <= half; ++j)
+                {
+                    const int k = i + j;
+                    if (k < 0 || k >= n) continue;
+                    if (src[k] <= 0.0f) continue;
+                    win.push_back(src[k]);
+                }
+                if (win.empty())
+                {
+                    frames[i].f0Hz = 0.0f;
+                    continue;
+                }
+                std::sort(win.begin(), win.end());
+                frames[i].f0Hz = win[win.size() / 2];
+            }
+        }
+
+        struct Event
+        {
+            double startMs, endMs;
+            const char* type;
+            float f0Start, f0End;
+            float levelDbMean;
+            std::vector<Frame> frames;
+        };
+
+        std::vector<Event> splitTone(const Event& e)
+        {
+            std::vector<Event> subs;
+            if (e.frames.size() < 3)
+            {
+                subs.push_back(e);
+                return subs;
+            }
+
+            size_t start = 0;
+            for (size_t i = 1; i < e.frames.size(); ++i)
+            {
+                const float f0Prev = e.frames[i - 1].f0Hz;
+                const float f0Curr = e.frames[i].f0Hz;
+                if (f0Prev <= 0.0f || f0Curr <= 0.0f) continue;
+
+                const float jump = std::fabs(f0Curr - f0Prev)
+                    / std::max(50.0f, f0Prev);
+                const float totalDur = e.frames[i].tMs - e.frames[start].tMs;
+
+                if (jump > SUBEVENT_F0_JUMP && totalDur > MIN_SUBEVENT_MS)
+                {
+                    Event sub;
+                    sub.startMs = e.frames[start].tMs;
+                    sub.endMs = e.frames[i - 1].tMs;
+                    sub.type = e.type;
+                    sub.f0Start = e.frames[start].f0Hz;
+                    sub.f0End = e.frames[i - 1].f0Hz;
+                    float sumL = 0.0f;
+                    for (size_t k = start; k < i; ++k) sumL += e.frames[k].levelDb;
+                    sub.levelDbMean = sumL / float(i - start);
+                    sub.frames.assign(e.frames.begin() + start,
+                                      e.frames.begin() + i);
+                    subs.push_back(sub);
+                    start = i;
+                }
+            }
+            if (start < e.frames.size())
+            {
+                Event sub;
+                sub.startMs = e.frames[start].tMs;
+                sub.endMs = e.frames.back().tMs;
+                sub.type = e.type;
+                sub.f0Start = e.frames[start].f0Hz;
+                sub.f0End = e.frames.back().f0Hz;
+                float sumL = 0.0f;
+                for (size_t k = start; k < e.frames.size(); ++k)
+                    sumL += e.frames[k].levelDb;
+                sub.levelDbMean = sumL / float(e.frames.size() - start);
+                sub.frames.assign(e.frames.begin() + start, e.frames.end());
+                subs.push_back(sub);
+            }
+
+            std::vector<Event> kept;
+            for (auto& s : subs)
+            {
+                const double dur = s.endMs - s.startMs;
+                if (dur < MIN_SUBEVENT_MS && !kept.empty())
+                {
+                    kept.back().endMs = s.endMs;
+                    kept.back().f0End = s.f0End;
+                    for (const auto& fr : s.frames)
+                        kept.back().frames.push_back(fr);
+                    continue;
+                }
+                kept.push_back(s);
+            }
+            return kept;
+        }
+
+        // ============================================================
+        //  Для кадра и его F0 — найти топ-3 гармоники (2×, 3×, 4×).
+        //  Возвращает вектор пар (частота, дБ относительно основной).
+        // ============================================================
+        std::vector<Harm> findHarmonics(const std::vector<float>& mag,
+                                        int sr, int fftSize,
+                                        float f0)
+        {
+            std::vector<Harm> result;
+            if (f0 <= 0.0f) return result;
+
+            const float binHz = float(sr) / float(fftSize);
+            const int half = int(mag.size());
+
+            // Уровень основной: ближайший бин к f0.
+            const int k0 = std::max(1, int(f0 / binHz + 0.5f));
+            float mag0 = 0.0f;
+            for (int k = std::max(1, k0 - 2); k <= std::min(half - 1, k0 + 2); ++k)
+                if (mag[k] > mag0) mag0 = mag[k];
+            if (mag0 < 1e-9f) return result;
+
+            // Ищем пики около 2×, 3×, 4×.
+            for (int h = 2; h <= 4; ++h)
+            {
+                const float fH = f0 * float(h);
+                if (fH >= float(sr) * 0.45f) break;
+                const int kH = std::max(1, int(fH / binHz + 0.5f));
+
+                // Локальный максимум в окне ±3 бина.
+                int kBest = -1;
+                float magBest = 0.0f;
+                for (int k = std::max(1, kH - 3);
+                     k <= std::min(half - 1, kH + 3); ++k)
+                {
+                    if (mag[k] > magBest)
+                    {
+                        magBest = mag[k];
+                        kBest = k;
+                    }
+                }
+                if (kBest < 0 || magBest < 1e-9f) continue;
+
+                Harm hm;
+                hm.freq = float(kBest) * binHz;
+                hm.relDb = 20.0f * std::log10(magBest / mag0 + 1e-9f);
+                if (hm.relDb < -40.0f) continue; // слишком тихо
+                result.push_back(hm);
+            }
+            return result;
+        }
+    }
+
+    void writeDetails(std::ostream& os, const WavData& wav)
+    {
+        const int sr = wav.sampleRate;
+        const int64_t N = int64_t(wav.samples.size());
+        const int win = FFT_WIN;
+        const int hop = std::max(1, sr * FRAME_HOP_MS / 1000);
+
+        if (N < win || sr <= 0)
+        {
+            os << "# file too short or sr=0\n";
+            return;
+        }
+
+        const double totalDurMs = double(N) / double(sr) * 1000.0;
+        const float fMin = F0_MIN_HZ;
+        const float fMax = std::min(F0_MAX_HZ, float(sr) * 0.45f);
+
+        os << "# sound_digit v7 — детали (F0-кривая, огибающая, гармоники)\n";
+        os << "# sr=" << sr << ", duration=" << int(totalDurMs) << " ms\n";
+        os << "# F0 диапазон: " << int(fMin) << "–" << int(fMax) << " Hz\n";
+        os << "# детали для событий > " << int(DETAIL_MIN_DUR_MS) << " ms\n\n";
+
+        // Глобальный максимум.
+        float gMax = 0.0f;
+        {
+            std::vector<std::complex<float>> buf(win);
+            std::vector<float> seg(win);
+            for (int64_t s = 0; s + win <= N; s += hop)
+            {
+                for (int i = 0; i < win; ++i) seg[i] = wav.samples[s + i];
+                applyHann(seg);
+                for (int i = 0; i < win; ++i)
+                    buf[i] = std::complex<float>(seg[i], 0.0f);
+                fft(buf);
+                for (int k = 2; k < win / 2; ++k)
+                {
+                    const float m = std::abs(buf[k]) / (win * 0.5f);
+                    if (m > gMax) gMax = m;
+                }
+            }
+            if (gMax < 1e-9f) gMax = 1.0f;
+        }
+
+        // Первый проход: уровни и фон.
+        std::vector<Frame> frames;
+        std::vector<std::complex<float>> buf(win);
+        std::vector<float> seg(win);
+        std::vector<float> levelRaw;
+
+        for (int64_t s = 0; s + win <= N; s += hop)
+        {
+            for (int i = 0; i < win; ++i) seg[i] = wav.samples[s + i];
+            applyHann(seg);
+            for (int i = 0; i < win; ++i)
+                buf[i] = std::complex<float>(seg[i], 0.0f);
+            fft(buf);
+            const int half = win / 2;
+            double eTot = 0.0;
+            for (int k = 2; k < half; ++k)
+            {
+                const float m = std::abs(buf[k]) / (win * 0.5f);
+                eTot += double(m) * m;
+            }
+            const float levelDb = (eTot > 1e-20)
+                                      ? float(10.0 * std::log10(eTot / double(half)))
+                                      : -120.0f;
+            levelRaw.push_back(levelDb);
+
+            Frame fr;
+            fr.tMs = double(s) / double(sr) * 1000.0;
+            fr.levelDb = levelDb;
+            fr.f0Hz = 0.0f;
+            fr.harmonic = 0.0f;
+            fr.highFrac = 0.0f;
+            fr.type = "SILENCE";
+            frames.push_back(fr);
+        }
+
+        std::vector<float> sorted = levelRaw;
+        std::sort(sorted.begin(), sorted.end());
+        const size_t cut = std::max<size_t>(1, sorted.size() / 4);
+        const float noiseFloor = sorted[cut / 2];
+        const float silenceThr = noiseFloor + SILENCE_OFFSET_DB;
+
+        os << "# фон: " << std::fixed << std::setprecision(1) << noiseFloor
+            << " dB, порог тишины: " << silenceThr << " dB\n\n";
+
+        // Второй проход: F0 через автокорреляцию.
+        std::vector<float> segAutocorr(win);
+
+        for (size_t i = 0; i < frames.size(); ++i)
+        {
+            Frame& fr = frames[i];
+            if (fr.levelDb < silenceThr)
+            {
+                fr.type = "SILENCE";
+                continue;
+            }
+            const int64_t s = int64_t(i) * hop;
+            if (s + win > N)
+            {
+                fr.type = "NOISE";
+                continue;
+            }
+
+            for (int k = 0; k < win; ++k) segAutocorr[k] = wav.samples[s + k];
+            float corr = 0.0f;
+            fr.f0Hz = estimateF0Autocorr(segAutocorr, sr, fMin, fMax, corr);
+
+            for (int k = 0; k < win; ++k) seg[k] = wav.samples[s + k];
+            applyHann(seg);
+            for (int k = 0; k < win; ++k)
+                buf[k] = std::complex<float>(seg[k], 0.0f);
+            fft(buf);
+            const int half = win / 2;
+            std::vector<float> mag(half);
+            for (int k = 0; k < half; ++k)
+                mag[k] = std::abs(buf[k]) / (win * 0.5f);
+
+            fr.harmonic = estimateHarmonicity(mag, gMax, sr, win, fMin, fMax);
+            fr.highFrac = computeHighFrac(mag, sr, win, fMax);
+            fr.type = classify(fr.levelDb, silenceThr, fr.f0Hz,
+                               fr.harmonic, fr.highFrac, fMax);
+        }
+
+        smoothFrames(frames);
+        medianFilterF0(frames);
+
+        // События.
+        std::vector<Event> events;
+        {
+            int i = 0;
+            while (i < int(frames.size()))
+            {
+                const char* t = frames[i].type;
+                int j = i + 1;
+                while (j < int(frames.size()) && frames[j].type == t) ++j;
+
+                Event e;
+                e.startMs = frames[i].tMs;
+                e.endMs = (j < int(frames.size())) ? frames[j].tMs : totalDurMs;
+                e.type = t;
+                e.f0Start = frames[i].f0Hz;
+                e.f0End = frames[j - 1].f0Hz;
+                float sumL = 0.0f;
+                for (int k = i; k < j; ++k) sumL += frames[k].levelDb;
+                e.levelDbMean = sumL / float(j - i);
+                e.frames.assign(frames.begin() + i, frames.begin() + j);
+                events.push_back(e);
+                i = j;
+            }
+        }
+
+        std::vector<Event> merged;
+        for (auto& e : events)
+        {
+            const double dur = e.endMs - e.startMs;
+            if (dur < MIN_EVENT_MS && !merged.empty())
+            {
+                merged.back().endMs = e.endMs;
+                merged.back().f0End = e.f0End;
+                for (const auto& fr : e.frames)
+                    merged.back().frames.push_back(fr);
+                continue;
+            }
+            merged.push_back(e);
+        }
+
+        std::vector<Event> finalEvents;
+        for (auto& e : merged)
+        {
+            const double dur = e.endMs - e.startMs;
+            if (e.type[0] == 'T' && dur > 400.0)
+            {
+                auto subs = splitTone(e);
+                for (auto& s : subs) finalEvents.push_back(s);
+            }
+            else
+            {
+                finalEvents.push_back(e);
+            }
+        }
+
+        // === Вывод деталей ===
+        int idx = 0;
+        for (const auto& e : finalEvents)
+        {
+            ++idx;
+            const double dur = e.endMs - e.startMs;
+
+            if (dur < DETAIL_MIN_DUR_MS)
+            {
+                os << "# [" << idx << "] " << e.type
+                    << " " << int(e.startMs) << "–" << int(e.endMs)
+                    << " мс (" << int(dur) << " мс) — короткое, деталей нет\n\n";
+                continue;
+            }
+
+            os << "# ============================================================\n";
+            os << "# Событие " << idx << ": " << e.type
+                << ", " << int(e.startMs) << "–" << int(e.endMs)
+                << " мс, длит " << int(dur) << " мс\n";
+            os << "# F0: " << int(e.f0Start) << " → " << int(e.f0End) << " Гц\n";
+            os << "# амплитуда: " << std::fixed << std::setprecision(1)
+                << e.levelDbMean << " дБ\n";
+            os << "# ------------------------------------------------------------\n";
+            os << "#  время   F0    ампл   гармоники (Гц:отн_дБ)\n";
+
+            for (const auto& fr : e.frames)
+            {
+                os << "  " << std::setw(6) << std::fixed << std::setprecision(0)
+                    << fr.tMs << "  ";
+                if (fr.f0Hz <= 0.0f)
+                    os << "   —  ";
+                else
+                    os << std::setw(5) << fr.f0Hz << "  ";
+                os << std::setw(6) << std::setprecision(1) << fr.levelDb << "  ";
+
+                // Гармоники считаем по свежему спектру этого кадра.
+                if (fr.f0Hz > 0.0f)
+                {
+                    const int64_t s = int64_t(std::round(fr.tMs / 1000.0 * sr));
+                    if (s >= 0 && s + win <= N)
+                    {
+                        for (int k = 0; k < win; ++k) seg[k] = wav.samples[s + k];
+                        applyHann(seg);
+                        for (int k = 0; k < win; ++k)
+                            buf[k] = std::complex<float>(seg[k], 0.0f);
+                        fft(buf);
+                        const int half = win / 2;
+                        std::vector<float> mag(half);
+                        for (int k = 0; k < half; ++k)
+                            mag[k] = std::abs(buf[k]) / (win * 0.5f);
+
+                        auto harms = findHarmonics(mag, sr, win, fr.f0Hz);
+                        for (const auto& h : harms)
+                        {
+                            os << std::setw(5) << std::setprecision(0) << h.freq
+                                << ":" << std::setw(5) << std::setprecision(1)
+                                << h.relDb << "  ";
+                        }
+                    }
+                }
+                os << "\n";
+            }
+            os << "\n";
+        }
+    }
+}
+
+
+
+
+
+// files\sound_digit\src\detail.h
+#pragma once
+#include "wav_loader.h"
+#include <ostream>
+
+namespace sd
+{
+    // Построить детальный отчёт: для каждого длинного события
+    // (TONE > 300 мс) — F0-кривая, огибающая, гармоники.
+    void writeDetails(std::ostream& os, const WavData& wav);
+}
+
+
+
+
+
+// files\sound_digit\src\events.cpp
+#include "events.h"
+#include "fft.h"
+
+#include <cmath>
+#include <iomanip>
+#include <vector>
+#include <algorithm>
+#include <complex>
+
+namespace sd
+{
+    namespace
+    {
+        constexpr float PI_F = 3.14159265358979323846f;
+        constexpr float TWO_PI_F = 6.28318530717958647692f;
+
+        // ============================================================
+        //  СОБЫТИЯ — параметры (v6.2, с автокорреляцией и сглаживанием)
+        // ============================================================
+
+        constexpr int FRAME_HOP_MS = 25;
+        constexpr int FFT_WIN = 1024;
+
+        constexpr float F0_MIN_HZ = 100.0f;
+        constexpr float F0_MAX_HZ = 8000.0f;
+
+        constexpr float HARMONIC_THR_TONE = 0.30f;
+        constexpr float SILENCE_OFFSET_DB = 12.0f;
+
+        constexpr double MIN_EVENT_MS = 100.0;
+
+        // Автокорреляция: минимальная корреляция для «есть F0».
+        constexpr float AUTOCORR_MIN = 0.30f;
+
+        // Медианный фильтр по F0.
+        constexpr int MEDIAN_WIN = 5;
+
+        // Разбиение длинных TONE.
+        constexpr float SUBEVENT_F0_JUMP = 0.25f;
+        constexpr double MIN_SUBEVENT_MS = 80.0;
+
+        constexpr float STR_FREQ_FRAC = 0.60f;
+
+        // ============================================================
+
+        struct Frame
+        {
+            double tMs;
+            float levelDb;
+            float f0Hz;
+            float harmonic;
+            float highFrac;
+            const char* type;
+        };
+
+        std::vector<std::pair<int, float>>
+        findPeaks(const std::vector<float>& mag, float maxMag, float floorDb)
+        {
+            std::vector<std::pair<int, float>> peaks;
+            const int half = int(mag.size());
+            for (int k = 2; k < half - 1; ++k)
+            {
+                if (mag[k] > mag[k - 1] && mag[k] > mag[k + 1])
+                {
+                    const float db = 20.0f * std::log10(mag[k] / maxMag + 1e-9f);
+                    if (db < floorDb) continue;
+                    peaks.push_back({k, mag[k]});
+                }
+            }
+            return peaks;
+        }
+
+        // ============================================================
+        //  Оценка F0 через автокорреляцию.
+        //
+        //  Для диапазона [fMin, fMax] находим период T = sr/f,
+        //  считаем нормированную автокорреляцию, берём максимум.
+        //  Это устойчивее к гармоникам, чем поиск пиков в спектре.
+        // ============================================================
+        float estimateF0Autocorr(const std::vector<float>& samples,
+                                 int sr, float fMin, float fMax,
+                                 float& outCorr)
+        {
+            outCorr = 0.0f;
+            const int n = int(samples.size());
+            if (n < 64) return 0.0f;
+
+            // Центрируем сигнал.
+            double mean = 0.0;
+            for (float v : samples) mean += v;
+            mean /= double(n);
+
+            std::vector<float> x(n);
+            for (int i = 0; i < n; ++i) x[i] = float(samples[i] - mean);
+
+            // Нормировочный множитель (энергия).
+            double energy = 0.0;
+            for (int i = 0; i < n; ++i) energy += double(x[i]) * x[i];
+            if (energy < 1e-12) return 0.0f;
+
+            // Периоды (лаг в сэмплах).
+            const int lagMin = std::max(2, int(float(sr) / fMax));
+            const int lagMax = std::min(n / 2, int(float(sr) / fMin));
+            if (lagMax <= lagMin) return 0.0f;
+
+            float bestLag = 0.0f;
+            float bestCorr = 0.0f;
+
+            for (int lag = lagMin; lag <= lagMax; ++lag)
+            {
+                double sum = 0.0;
+                for (int i = 0; i + lag < n; ++i)
+                    sum += double(x[i]) * x[i + lag];
+
+                const float corr = float(sum / energy);
+
+                // Ищем локальный максимум автокорреляции.
+                if (corr > bestCorr && corr > AUTOCORR_MIN)
+                {
+                    bestCorr = corr;
+                    bestLag = float(lag);
+                }
+            }
+
+            if (bestLag <= 0.0f) return 0.0f;
+            outCorr = bestCorr;
+            return float(sr) / bestLag;
+        }
+
+        float estimateHarmonicity(const std::vector<float>& mag,
+                                  float maxMag, int sr, int fftSize,
+                                  float fMin, float fMax)
+        {
+            auto peaks = findPeaks(mag, maxMag, -40.0f);
+            if (peaks.size() < 2) return 0.0f;
+            const float binHz = float(sr) / float(fftSize);
+            int totalChecked = 0, harmonicCount = 0;
+            for (const auto& p : peaks)
+            {
+                const float f1 = float(p.first) * binHz;
+                if (f1 < fMin || f1 > fMax) continue;
+                ++totalChecked;
+                bool has2 = false, has3 = false;
+                for (const auto& q : peaks)
+                {
+                    const float f2 = float(q.first) * binHz;
+                    const float r2 = f2 / f1;
+                    if (std::fabs(r2 - 2.0f) < 0.10f) has2 = true;
+                    if (std::fabs(r2 - 3.0f) < 0.10f) has3 = true;
+                }
+                if (has2 || has3) ++harmonicCount;
+            }
+            if (totalChecked == 0) return 0.0f;
+            return float(harmonicCount) / float(totalChecked);
+        }
+
+        float computeHighFrac(const std::vector<float>& mag, int sr, int fftSize,
+                              float boundaryHz)
+        {
+            const int half = int(mag.size());
+            const float binHz = float(sr) / float(fftSize);
+            const int kb = std::max(1, int(boundaryHz / binHz));
+            double eLow = 0.0, eHigh = 0.0;
+            for (int k = 2; k < half; ++k)
+            {
+                const double e = double(mag[k]) * mag[k];
+                if (k < kb) eLow += e;
+                else eHigh += e;
+            }
+            const double eTot = eLow + eHigh;
+            if (eTot < 1e-20) return 0.0f;
+            return float(eHigh / eTot);
+        }
+
+        const char* classify(float levelDb, float silenceThr,
+                             float f0, float harmonic, float highFrac,
+                             float fMax)
+        {
+            if (levelDb < silenceThr) return "SILENCE";
+            if (harmonic >= HARMONIC_THR_TONE)
+            {
+                if (f0 > fMax * STR_FREQ_FRAC) return "STR";
+                if (f0 == 0.0f && highFrac > 0.75f) return "STR";
+                return "TONE";
+            }
+            if (highFrac > 0.75f) return "STR";
+            return "NOISE";
+        }
+
+        void smoothFrames(std::vector<Frame>& frames)
+        {
+            const int n = int(frames.size());
+            if (n < 4) return;
+            for (int pass = 0; pass < 2; ++pass)
+            {
+                for (int i = 1; i < n - 1; ++i)
+                {
+                    if (frames[i].type != frames[i - 1].type
+                        && frames[i].type != frames[i + 1].type)
+                    {
+                        frames[i].type = frames[i - 1].type;
+                    }
+                }
+            }
+        }
+
+        // ============================================================
+        //  Медианный фильтр по F0 внутри массива кадров.
+        // ============================================================
+        void medianFilterF0(std::vector<Frame>& frames)
+        {
+            const int n = int(frames.size());
+            if (n < MEDIAN_WIN) return;
+
+            std::vector<float> src(n);
+            for (int i = 0; i < n; ++i) src[i] = frames[i].f0Hz;
+
+            const int half = MEDIAN_WIN / 2;
+            std::vector<float> win;
+            win.reserve(MEDIAN_WIN);
+
+            for (int i = 0; i < n; ++i)
+            {
+                win.clear();
+                for (int j = -half; j <= half; ++j)
+                {
+                    const int k = i + j;
+                    if (k < 0 || k >= n) continue;
+                    if (src[k] <= 0.0f) continue;
+                    win.push_back(src[k]);
+                }
+                if (win.empty())
+                {
+                    frames[i].f0Hz = 0.0f;
+                    continue;
+                }
+                std::sort(win.begin(), win.end());
+                frames[i].f0Hz = win[win.size() / 2];
+            }
+        }
+
+        struct Event
+        {
+            double startMs, endMs;
+            const char* type;
+            float f0Start, f0End;
+            float levelDbMean;
+            std::vector<Frame> frames;
+        };
+
+        const char* directionOf(float f0Start, float f0End)
+        {
+            if (f0Start <= 0.0f || f0End <= 0.0f) return "—";
+            const float d = (f0End - f0Start) / std::max(50.0f, f0Start);
+            if (d > 0.20f) return "вверх";
+            if (d < -0.20f) return "вниз";
+            return "ровно";
+        }
+
+        float jitterOf(const std::vector<Frame>& frames)
+        {
+            float sum = 0.0f;
+            int cnt = 0;
+            float prev = 0.0f;
+            for (const auto& fr : frames)
+            {
+                if (fr.f0Hz <= 0.0f) continue;
+                if (prev > 0.0f)
+                {
+                    sum += std::fabs(fr.f0Hz - prev) / std::max(50.0f, prev);
+                    ++cnt;
+                }
+                prev = fr.f0Hz;
+            }
+            if (cnt == 0) return 0.0f;
+            return sum / float(cnt);
+        }
+
+        const char* characterOf(float jitter)
+        {
+            if (jitter < 0.03f) return "плавно";
+            if (jitter < 0.10f) return "слегка дрожит";
+            return "дрожит";
+        }
+
+        std::vector<Event> splitTone(const Event& e)
+        {
+            std::vector<Event> subs;
+            if (e.frames.size() < 3)
+            {
+                subs.push_back(e);
+                return subs;
+            }
+
+            size_t start = 0;
+
+            for (size_t i = 1; i < e.frames.size(); ++i)
+            {
+                const float f0Prev = e.frames[i - 1].f0Hz;
+                const float f0Curr = e.frames[i].f0Hz;
+
+                // Если кто-то из пары — 0, это разрыв трека.
+                if (f0Prev <= 0.0f || f0Curr <= 0.0f) continue;
+
+                const float jump = std::fabs(f0Curr - f0Prev)
+                    / std::max(50.0f, f0Prev);
+                const float totalDur = e.frames[i].tMs - e.frames[start].tMs;
+
+                if (jump > SUBEVENT_F0_JUMP && totalDur > MIN_SUBEVENT_MS)
+                {
+                    Event sub;
+                    sub.startMs = e.frames[start].tMs;
+                    sub.endMs = e.frames[i - 1].tMs;
+                    sub.type = e.type;
+                    sub.f0Start = e.frames[start].f0Hz;
+                    sub.f0End = e.frames[i - 1].f0Hz;
+                    float sumL = 0.0f;
+                    for (size_t k = start; k < i; ++k) sumL += e.frames[k].levelDb;
+                    sub.levelDbMean = sumL / float(i - start);
+                    sub.frames.assign(e.frames.begin() + start,
+                                      e.frames.begin() + i);
+                    subs.push_back(sub);
+                    start = i;
+                }
+            }
+            if (start < e.frames.size())
+            {
+                Event sub;
+                sub.startMs = e.frames[start].tMs;
+                sub.endMs = e.frames.back().tMs;
+                sub.type = e.type;
+                sub.f0Start = e.frames[start].f0Hz;
+                sub.f0End = e.frames.back().f0Hz;
+                float sumL = 0.0f;
+                for (size_t k = start; k < e.frames.size(); ++k)
+                    sumL += e.frames[k].levelDb;
+                sub.levelDbMean = sumL / float(e.frames.size() - start);
+                sub.frames.assign(e.frames.begin() + start, e.frames.end());
+                subs.push_back(sub);
+            }
+
+            std::vector<Event> kept;
+            for (auto& s : subs)
+            {
+                const double dur = s.endMs - s.startMs;
+                if (dur < MIN_SUBEVENT_MS && !kept.empty())
+                {
+                    kept.back().endMs = s.endMs;
+                    kept.back().f0End = s.f0End;
+                    for (const auto& fr : s.frames)
+                        kept.back().frames.push_back(fr);
+                    continue;
+                }
+                kept.push_back(s);
+            }
+            return kept;
+        }
+    }
+
+    void writeEvents(std::ostream& os, const WavData& wav)
+    {
+        const int sr = wav.sampleRate;
+        const int64_t N = int64_t(wav.samples.size());
+        const int win = FFT_WIN;
+        const int hop = std::max(1, sr * FRAME_HOP_MS / 1000);
+
+        if (N < win || sr <= 0)
+        {
+            os << "# file too short or sr=0\n";
+            return;
+        }
+
+        const double totalDurMs = double(N) / double(sr) * 1000.0;
+        const float fMin = F0_MIN_HZ;
+        const float fMax = std::min(F0_MAX_HZ, float(sr) * 0.45f);
+
+        os << "# sound_digit v6.2 — события (автокорреляция + медиана)\n";
+        os << "# sr=" << sr << ", duration=" << int(totalDurMs) << " ms\n";
+        os << "# F0 диапазон: " << int(fMin) << "–" << int(fMax) << " Hz\n";
+        os << "# медианный фильтр F0: окно " << MEDIAN_WIN << " кадров\n\n";
+
+        // Глобальный максимум.
+        float gMax = 0.0f;
+        {
+            std::vector<std::complex<float>> buf(win);
+            std::vector<float> seg(win);
+            for (int64_t s = 0; s + win <= N; s += hop)
+            {
+                for (int i = 0; i < win; ++i) seg[i] = wav.samples[s + i];
+                applyHann(seg);
+                for (int i = 0; i < win; ++i)
+                    buf[i] = std::complex<float>(seg[i], 0.0f);
+                fft(buf);
+                for (int k = 2; k < win / 2; ++k)
+                {
+                    const float m = std::abs(buf[k]) / (win * 0.5f);
+                    if (m > gMax) gMax = m;
+                }
+            }
+            if (gMax < 1e-9f) gMax = 1.0f;
+        }
+
+        // Первый проход: уровни и фон.
+        std::vector<Frame> frames;
+        std::vector<std::complex<float>> buf(win);
+        std::vector<float> seg(win);
+        std::vector<float> levelRaw;
+
+        for (int64_t s = 0; s + win <= N; s += hop)
+        {
+            for (int i = 0; i < win; ++i) seg[i] = wav.samples[s + i];
+            applyHann(seg);
+            for (int i = 0; i < win; ++i)
+                buf[i] = std::complex<float>(seg[i], 0.0f);
+            fft(buf);
+            const int half = win / 2;
+            double eTot = 0.0;
+            for (int k = 2; k < half; ++k)
+            {
+                const float m = std::abs(buf[k]) / (win * 0.5f);
+                eTot += double(m) * m;
+            }
+            const float levelDb = (eTot > 1e-20)
+                                      ? float(10.0 * std::log10(eTot / double(half)))
+                                      : -120.0f;
+            levelRaw.push_back(levelDb);
+
+            Frame fr;
+            fr.tMs = double(s) / double(sr) * 1000.0;
+            fr.levelDb = levelDb;
+            fr.f0Hz = 0.0f;
+            fr.harmonic = 0.0f;
+            fr.highFrac = 0.0f;
+            fr.type = "SILENCE";
+            frames.push_back(fr);
+        }
+
+        std::vector<float> sorted = levelRaw;
+        std::sort(sorted.begin(), sorted.end());
+        const size_t cut = std::max<size_t>(1, sorted.size() / 4);
+        const float noiseFloor = sorted[cut / 2];
+        const float silenceThr = noiseFloor + SILENCE_OFFSET_DB;
+
+        os << "# фон: " << std::fixed << std::setprecision(1) << noiseFloor
+            << " dB, порог тишины: " << silenceThr << " dB\n\n";
+
+        // Второй проход: F0 через автокорреляцию.
+        std::vector<float> segAutocorr(win);
+
+        for (size_t i = 0; i < frames.size(); ++i)
+        {
+            Frame& fr = frames[i];
+            if (fr.levelDb < silenceThr)
+            {
+                fr.type = "SILENCE";
+                continue;
+            }
+
+            const int64_t s = int64_t(i) * hop;
+            if (s + win > N)
+            {
+                fr.type = "NOISE";
+                continue;
+            }
+
+            // Копируем сэмплы для автокорреляции (без окна — окно
+            // на автокорреляцию влияет плохо, в отличие от FFT).
+            for (int k = 0; k < win; ++k) segAutocorr[k] = wav.samples[s + k];
+
+            // F0 через автокорреляцию.
+            float corr = 0.0f;
+            fr.f0Hz = estimateF0Autocorr(segAutocorr, sr, fMin, fMax, corr);
+
+            // Спектр для harmonic и highFrac.
+            for (int k = 0; k < win; ++k) seg[k] = wav.samples[s + k];
+            applyHann(seg);
+            for (int k = 0; k < win; ++k)
+                buf[k] = std::complex<float>(seg[k], 0.0f);
+            fft(buf);
+            const int half = win / 2;
+            std::vector<float> mag(half);
+            for (int k = 0; k < half; ++k)
+                mag[k] = std::abs(buf[k]) / (win * 0.5f);
+
+            fr.harmonic = estimateHarmonicity(mag, gMax, sr, win, fMin, fMax);
+            fr.highFrac = computeHighFrac(mag, sr, win, fMax);
+            fr.type = classify(fr.levelDb, silenceThr, fr.f0Hz,
+                               fr.harmonic, fr.highFrac, fMax);
+        }
+
+        smoothFrames(frames);
+
+        // Медианный фильтр по F0 — глобально по всему массиву кадров.
+        medianFilterF0(frames);
+
+        // События.
+        std::vector<Event> events;
+        {
+            int i = 0;
+            while (i < int(frames.size()))
+            {
+                const char* t = frames[i].type;
+                int j = i + 1;
+                while (j < int(frames.size()) && frames[j].type == t) ++j;
+
+                Event e;
+                e.startMs = frames[i].tMs;
+                e.endMs = (j < int(frames.size())) ? frames[j].tMs : totalDurMs;
+                e.type = t;
+                e.f0Start = frames[i].f0Hz;
+                e.f0End = frames[j - 1].f0Hz;
+                float sumL = 0.0f;
+                for (int k = i; k < j; ++k) sumL += frames[k].levelDb;
+                e.levelDbMean = sumL / float(j - i);
+                e.frames.assign(frames.begin() + i, frames.begin() + j);
+                events.push_back(e);
+                i = j;
+            }
+        }
+
+        std::vector<Event> merged;
+        for (auto& e : events)
+        {
+            const double dur = e.endMs - e.startMs;
+            if (dur < MIN_EVENT_MS && !merged.empty())
+            {
+                merged.back().endMs = e.endMs;
+                merged.back().f0End = e.f0End;
+                for (const auto& fr : e.frames)
+                    merged.back().frames.push_back(fr);
+                continue;
+            }
+            merged.push_back(e);
+        }
+
+        std::vector<Event> finalEvents;
+        for (auto& e : merged)
+        {
+            const double dur = e.endMs - e.startMs;
+            if (e.type[0] == 'T' && dur > 400.0)
+            {
+                auto subs = splitTone(e);
+                for (auto& s : subs) finalEvents.push_back(s);
+            }
+            else
+            {
+                finalEvents.push_back(e);
+            }
+        }
+
+        os << "# СОБЫТИЯ\n";
+        os << "#   #  начало   конец   дл(ms)  тип     F0нач  F0кон  ампл  напр   характер\n";
+
+        int idx = 1;
+        for (const auto& e : finalEvents)
+        {
+            const double dur = e.endMs - e.startMs;
+            os << "  " << std::setw(4) << idx++ << "  "
+                << std::setw(7) << std::fixed << std::setprecision(0) << e.startMs << "  "
+                << std::setw(7) << e.endMs << "  "
