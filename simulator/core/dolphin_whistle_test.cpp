@@ -228,6 +228,15 @@ namespace hydro
     //  Серия начинается с crackleStartU фразы и идёт до конца фразы.
     //  Накладывается на свист — не заменяет его.
     // ============================================================
+    // ============================================================
+    //  Стрёкот — ШУМОВАЯ АРХИТЕКТУРА.
+    //
+    //  Не тон. Шум, пропущенный через BPF 4–8 кГц.
+    //  Амплитуда пульсирует серией коротких гауссовых импульсов
+    //  с частотой 30–60 Гц. Каждый импульс — 1–3 мс.
+    //
+    //  Это и есть «треск».
+    // ============================================================
     void DolphinWhistleTest::renderCrackleForPhrase(
         std::vector<float>& buffer, int numSamples, const Phrase& ph)
     {
@@ -247,35 +256,44 @@ namespace hydro
 
         const float totalDurSec = static_cast<float>(totalLen) * invFs;
 
-        // --- Параметры этой серии (случайные) ---
+        // --- Параметры серии (случайные) ---
         std::uniform_real_distribution<float> pulseDist(
             p_.cracklePulseHzMin, p_.cracklePulseHzMax);
-        std::uniform_real_distribution<float> phaseDist(0.0f, TWO_PI_F);
+        std::uniform_real_distribution<float> durDist(
+            p_.cracklePulseDurMinMs * 0.001f,
+            p_.cracklePulseDurMaxMs * 0.001f);
 
         const float pulseHz = pulseDist(rng_);
-        const float pulsePhase = phaseDist(rng_);
+        const float meanPeriod = 1.0f / pulseHz;
 
-        // --- Гармоники тембра ---
-        const int nHarm = std::max(1, p_.crackleNumHarm);
-        const float f0 = p_.crackleBaseHz;
+        // BPF: два однополюсника (разностный BP).
+        const float fcMid = 0.5f * (p_.crackleBpfLowHz
+            + p_.crackleBpfHighHz);
+        const float a = std::exp(-TWO_PI_F * fcMid * invFs);
+        float lp1 = 0.0f, lp2 = 0.0f;
 
-        // Фазы гармоник — случайные, чтобы не было «синфазного» пика.
-        std::vector<float> harmPhase(nHarm);
-        for (int k = 0; k < nHarm; ++k)
-            harmPhase[k] = phaseDist(rng_);
+        // --- Огибающая пульсации: серия гауссовых импульсов ---
+        // Заранее генерируем моменты импульсов.
+        std::vector<float> pulseCenters;
+        {
+            float t = 0.0f;
+            while (t < totalDurSec)
+            {
+                pulseCenters.push_back(t);
+                t += meanPeriod;
+            }
+        }
 
         // --- Рендер ---
-        float phasePulse = pulsePhase;
-
         for (int n = 0; n < totalLen; ++n)
         {
             const int idx = crackleStart + n;
             if (idx < 0 || idx >= numSamples) continue;
 
             const float tLocal = static_cast<float>(n) * invFs;
-            const float u = tLocal / totalDurSec; // 0..1
+            const float u = tLocal / totalDurSec;
 
-            // --- Огибающая серии ---
+            // --- Огибающая серии (плавный вход/выход) ---
             float env = 1.0f;
             if (u < p_.crackleRiseFrac)
                 env = 0.5f * (1.0f - std::cos(PI_F * u
@@ -286,28 +304,30 @@ namespace hydro
                 env = 0.5f * (1.0f - std::cos(PI_F * v));
             }
 
-            // --- Пульсация (AM) ---
-            const float am = 1.0f
-                - p_.cracklePulseDepth * 0.5f
-                + p_.cracklePulseDepth * 0.5f
-                * std::sin(TWO_PI_F * pulseHz * tLocal
-                    + pulsePhase);
-
-            // --- Carrier: сумма гармоник ---
-            float carrier = 0.0f;
-            float decay = 1.0f;
-            for (int k = 1; k <= nHarm; ++k)
+            // --- Пульсирующая огибающая (серия гауссовых импульсов) ---
+            // Для каждого импульса — гауссова огибающая.
+            float pulseEnv = 0.0f;
+            for (float pc : pulseCenters)
             {
-                const float fH = f0 * static_cast<float>(k);
-                if (fH >= fs * 0.45f) break;
-
-                carrier += decay * std::sin(
-                    TWO_PI_F * fH * tLocal + harmPhase[k - 1]);
-                decay *= p_.crackleHarmDecay;
+                const float dt = tLocal - pc;
+                if (dt < -0.005f || dt > 0.005f) continue;
+                const float dur = 0.001f; // 1 мс — оценочно
+                const float tau = dur / 2.0f;
+                const float invTau2 = 1.0f / (tau * tau + 1e-9f);
+                const float g = std::exp(-(dt * dt) * invTau2);
+                if (g > pulseEnv) pulseEnv = g;
             }
 
-            // --- Сумма в буфер ---
-            buffer[idx] += carrier * am * env * p_.crackleLevel;
+            if (pulseEnv < 1e-4f) continue;
+
+            // --- Шумовой источник ---
+            const float white = gauss_(rng_);
+            lp1 = a * lp1 + (1.0f - a) * white;
+            lp2 = a * lp2 + (1.0f - a) * lp1;
+            const float band = lp1 - lp2; // BPF-выход
+
+            // --- Итог ---
+            buffer[idx] += band * pulseEnv * env * p_.crackleLevel;
         }
     }
 

@@ -89,35 +89,23 @@ namespace hydro
         float echoPitchFactor = 0.98f;
         float echoStretch = 1.0f;
 
-        // --- Стрёкот: НОВАЯ АРХИТЕКТУРА (пульсирующий звонкий тембр).
+
+        // --- Стрёкот: ШУМОВАЯ АРХИТЕКТУРА.
         //
-        //  Не серия импульсов, а непрерывный сигнал:
-        //    carrier = сумма гармоник от crackleBaseHz;
-        //    AM      = пульсация с cracklePulseHz;
-        //    env     = огибающая по краям серии.
-        //
-        //  Стрёкот «накладывается» на конец фразы:
-        //  начинается с crackleStartU, идёт до конца фразы.
+        //  Не тон. Шум. BPF 4–8 кГц + пульсирующая огибающая
+        //  с частотой 30–60 Гц. Это — «треск».
         // ---
         float crackleProb = 1.0f;
-        float crackleLevel = 1.0f; // подобрать
-
-        // Пульсация (трещание).
-        float cracklePulseHzMin = 30.0f; // Гц
-        float cracklePulseHzMax = 50.0f;
-        float cracklePulseDepth = 0.7f; // глубина AM (0..1)
-
-        // Тембр (звонкость).
-        float crackleBaseHz = 300.0f; // основная тембра, Гц
-        int crackleNumHarm = 8; // число гармоник тембра
-        float crackleHarmDecay = 0.6f; // убывание гармоник
-
-        // Где начинается стрёкот (доля фразы).
-        float crackleStartU = 0.40f;
-
-        // Огибающая серии (плавный вход/выход).
-        float crackleRiseFrac = 0.10f; // 10% на вход
-        float crackleFallFrac = 0.20f; // 20% на выход
+        float crackleLevel = 0.5f; // подобрать
+        float crackleBpfLowHz = 4000.0f; // нижняя граница BPF
+        float crackleBpfHighHz = 8000.0f; // верхняя граница BPF
+        float cracklePulseHzMin = 30.0f; // частота пульсации (трещания)
+        float cracklePulseHzMax = 60.0f;
+        float cracklePulseDurMinMs = 1.0f; // длительность одного «тик»
+        float cracklePulseDurMaxMs = 3.0f;
+        float crackleStartU = 0.40f; // с чего начинается
+        float crackleRiseFrac = 0.10f; // плавный вход
+        float crackleFallFrac = 0.20f; // плавный выход
 
         // --- СТАРЫЕ ПАРАМЕТРЫ (не используются, оставлены для совместимости) ---
         int crackleClickMin = 15;
