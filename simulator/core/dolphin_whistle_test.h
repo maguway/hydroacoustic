@@ -56,10 +56,13 @@ namespace hydro
 
         // --- Тембр ---
         int numHarmonics = 3;
-        float harm1Db = -12.0f;
-        float harm2Db = -18.0f;
-        float harm3Db = -24.0f;
-        float harm4Db = -30.0f;
+        float harm1Db = -20.0f; // Было -12.0, сделали тише
+        float harm2Db = -30.0f; // Было -18.0
+        float harm3Db = -40.0f; // Было -24.0
+        float harm4Db = -50.0f; // Было -30.0
+
+        // --- Ограничитель верхней частоты ---
+        float fMaxLimit = 6000.0f; // Чтобы свист не улетал в 11025 Гц
 
         // --- Вибрато ---
         float vibDepthHz = 10.0f;

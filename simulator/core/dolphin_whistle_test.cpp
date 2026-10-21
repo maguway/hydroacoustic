@@ -92,9 +92,11 @@ namespace hydro
             }
 
             // --- Вибрато ---
-            const float vibMain = p_.vibDepthHz
-                * std::sin(TWO_PI_F * p_.vibRateHz * tLocal);
+            const float vibMain = p_.vibDepthHz * std::sin(TWO_PI_F * p_.vibRateHz * tLocal);
             fInst += vibMain;
+
+            // Ограничиваем сверху, чтобы не упирался в Найквист
+            if (fInst > p_.fMaxLimit) fInst = p_.fMaxLimit;
 
             ph.fInstTrace[n] = fInst;
 
