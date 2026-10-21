@@ -502,9 +502,23 @@ static void generateWhistleTest(float fs)
 
     gen.generate(buffer.data(), totalSamples);
 
-    const std::string name = "whistle_test.wav";
-    if (writeMonoWavFloat32(name, buffer, static_cast<int>(fs)))
-        std::cout << "  Saved: " << name << "\n";
+    // --- 8-канальная раскладка ---
+    UcaGeometry uca(NUM_CHANNELS, UCA_RADIUS_M);
+    Propagation::Params pp;
+    pp.azimuthDeg    = SCENE_AZIMUTH_DEG;   // 45° из params.h
+    pp.soundSpeed    = SOUND_SPEED_WATER;
+    pp.receiverSnrDb = SCENE_RECEIVER_SNR_DB;
+    pp.noiseSeed     = 42;
+
+    Propagation prop(pp);
+    std::array<std::vector<float>, NUM_CHANNELS> ch8;
+
+    // Раскладываем моно на 8 каналов через ядро проекта
+    prop.propagate(buffer, totalSamples, fs, uca, ch8);
+
+    const std::string name = "whistle_test_8ch.wav";
+    if (writeWavFloat32(name, ch8, static_cast<int>(fs)))
+        std::cout << "  Saved: " << name << " (8 ch)\n";
     else
         std::cout << "  FAILED: " << name << "\n";
 
