@@ -1,0 +1,531 @@
+                if (f1 < fMin || f1 > fMax) continue;
+                ++totalChecked;
+
+                bool has2 = false, has3 = false;
+                for (const auto& q : peaks)
+                {
+                    const float f2 = float(q.first) * binHz;
+                    const float r2 = f2 / f1;
+                    if (std::fabs(r2 - 2.0f) < 0.10f) has2 = true;
+                    if (std::fabs(r2 - 3.0f) < 0.10f) has3 = true;
+                }
+                if (has2 || has3) ++harmonicCount;
+            }
+
+            if (totalChecked == 0) return 0.0f;
+            return float(harmonicCount) / float(totalChecked);
+        }
+
+        float estimateF0(const std::vector<float>& mag, float maxMag,
+                         int sr, int fftSize,
+                         float fMin, float fMax)
+        {
+            auto peaks = findPeaks(mag, maxMag, -40.0f);
+            if (peaks.empty()) return 0.0f;
+
+            const float binHz = float(sr) / float(fftSize);
+            float bestF = 0.0f, bestMag = 0.0f;
+            for (const auto& p : peaks)
+            {
+                const float f = float(p.first) * binHz;
+                if (f < fMin || f > fMax) continue;
+                if (p.second > bestMag)
+                {
+                    bestMag = p.second;
+                    bestF = f;
+                }
+            }
+            return bestF;
+        }
+
+        // Доля энергии выше границы (для классификации STR).
+        float computeHighFrac(const std::vector<float>& mag, int sr, int fftSize,
+                              float boundaryHz)
+        {
+            const int half = int(mag.size());
+            const float binHz = float(sr) / float(fftSize);
+            const int kb = std::max(1, int(boundaryHz / binHz));
+
+            double eLow = 0.0, eHigh = 0.0;
+            for (int k = 2; k < half; ++k)
+            {
+                const double e = double(mag[k]) * mag[k];
+                if (k < kb) eLow += e;
+                else eHigh += e;
+            }
+            const double eTot = eLow + eHigh;
+            if (eTot < 1e-20) return 0.0f;
+            return float(eHigh / eTot);
+        }
+
+        const char* classify(float levelDb, float silenceThr,
+                             float f0, float harmonic, float highFrac)
+        {
+            if (levelDb < silenceThr) return "SILENCE";
+            if (harmonic >= HARMONIC_THR_TONE)
+            {
+                // Тон. Если у него бОльшая часть энергии — в верхней
+                // половине спектра и он шумный — это стрёкот.
+                // Иначе — обычный тон.
+                if (highFrac > 0.75f && f0 == 0.0f) return "STR";
+                return "TONE";
+            }
+            // Не гармонично. Если много энергии наверху — STR.
+            if (highFrac > 0.75f) return "STR";
+            return "NOISE";
+        }
+
+        void smoothFrames(std::vector<Frame>& frames)
+        {
+            const int n = int(frames.size());
+            if (n < 4) return;
+            for (int pass = 0; pass < 2; ++pass)
+            {
+                for (int i = 1; i < n - 1; ++i)
+                {
+                    if (frames[i].type != frames[i - 1].type
+                        && frames[i].type != frames[i + 1].type)
+                    {
+                        frames[i].type = frames[i - 1].type;
+                    }
+                }
+            }
+        }
+
+        struct Event
+        {
+            double startMs, endMs;
+            const char* type;
+            float f0Start, f0End;
+            float levelDbMean;
+        };
+
+        std::vector<Event> buildEvents(const std::vector<Frame>& frames,
+                                       double totalDurMs)
+        {
+            std::vector<Event> events;
+            if (frames.empty()) return events;
+
+            int i = 0;
+            while (i < int(frames.size()))
+            {
+                const char* t = frames[i].type;
+                int j = i + 1;
+                while (j < int(frames.size()) && frames[j].type == t) ++j;
+
+                Event e;
+                e.startMs = frames[i].tMs;
+                e.endMs = (j < int(frames.size())) ? frames[j].tMs : totalDurMs;
+                e.type = t;
+                e.f0Start = frames[i].f0Hz;
+                e.f0End = frames[j - 1].f0Hz;
+                float sumL = 0.0f;
+                for (int k = i; k < j; ++k) sumL += frames[k].levelDb;
+                e.levelDbMean = sumL / float(j - i);
+                events.push_back(e);
+                i = j;
+            }
+
+            std::vector<Event> merged;
+            for (const auto& e : events)
+            {
+                const double dur = e.endMs - e.startMs;
+                if (dur < MIN_EVENT_MS && !merged.empty())
+                {
+                    merged.back().endMs = e.endMs;
+                    merged.back().levelDbMean =
+                        0.5f * (merged.back().levelDbMean + e.levelDbMean);
+                    continue;
+                }
+                merged.push_back(e);
+            }
+            return merged;
+        }
+    }
+
+    void writeMap(std::ostream& os, const WavData& wav)
+    {
+        const int sr = wav.sampleRate;
+        const int64_t N = int64_t(wav.samples.size());
+        const int win = FFT_WIN;
+        const int hop = std::max(1, sr * FRAME_HOP_MS / 1000);
+
+        if (N < win || sr <= 0)
+        {
+            os << "# file too short or sr=0\n";
+            return;
+        }
+
+        const double totalDurMs = double(N) / double(sr) * 1000.0;
+
+        // === Адаптивные границы для F0 ===
+        float fMin = F0_MIN_HZ;
+        float fMax = std::min(F0_MAX_HZ, float(sr) * 0.45f);
+
+        os << "# sound_digit v5.3 — карта сигнала (универсальная)\n";
+        os << "# sr=" << sr << ", duration=" << int(totalDurMs) << " ms"
+            << ", win=" << win << ", hop=" << FRAME_HOP_MS << " ms\n";
+        os << "# F0 диапазон: " << int(fMin) << "–" << int(fMax) << " Hz\n";
+        os << "# STR порог по highFrac: 0.75\n\n";
+
+        // === Глобальный максимум магнитуды ===
+        float gMax = 0.0f;
+        {
+            std::vector<std::complex<float>> buf(win);
+            std::vector<float> seg(win);
+            for (int64_t s = 0; s + win <= N; s += hop)
+            {
+                for (int i = 0; i < win; ++i) seg[i] = wav.samples[s + i];
+                applyHann(seg);
+                for (int i = 0; i < win; ++i)
+                    buf[i] = std::complex<float>(seg[i], 0.0f);
+                fft(buf);
+                for (int k = 2; k < win / 2; ++k)
+                {
+                    const float m = std::abs(buf[k]) / (win * 0.5f);
+                    if (m > gMax) gMax = m;
+                }
+            }
+            if (gMax < 1e-9f) gMax = 1.0f;
+        }
+
+        // === Первый проход: уровни и поиск медианы фона ===
+        std::vector<Frame> frames;
+        std::vector<std::complex<float>> buf(win);
+        std::vector<float> seg(win);
+        std::vector<float> levelRaw;
+
+        for (int64_t s = 0; s + win <= N; s += hop)
+        {
+            for (int i = 0; i < win; ++i) seg[i] = wav.samples[s + i];
+            applyHann(seg);
+            for (int i = 0; i < win; ++i)
+                buf[i] = std::complex<float>(seg[i], 0.0f);
+            fft(buf);
+
+            const int half = win / 2;
+            double eTot = 0.0;
+            for (int k = 2; k < half; ++k)
+            {
+                const float m = std::abs(buf[k]) / (win * 0.5f);
+                eTot += double(m) * m;
+            }
+            const float levelDb = (eTot > 1e-20)
+                                      ? float(10.0 * std::log10(eTot / double(half)))
+                                      : -120.0f;
+            levelRaw.push_back(levelDb);
+
+            Frame fr;
+            fr.tMs = double(s) / double(sr) * 1000.0;
+            fr.levelDb = levelDb;
+            fr.f0Hz = 0.0f;
+            fr.harmonic = 0.0f;
+            fr.highFrac = 0.0f;
+            fr.type = "SILENCE";
+            frames.push_back(fr);
+        }
+
+        // Медиана фона — берём нижние 25% кадров и находим медиану.
+        std::vector<float> sorted = levelRaw;
+        std::sort(sorted.begin(), sorted.end());
+        const size_t cut = std::max<size_t>(1, sorted.size() / 4);
+        const float noiseFloor =
+            sorted[cut / 2]; // медиана нижней четверти
+
+        // Адаптивный порог тишины.
+        const float silenceThr = noiseFloor + SILENCE_OFFSET_DB;
+
+        os << "# фон (медиана нижней четверти): "
+            << std::fixed << std::setprecision(1) << noiseFloor << " dB\n";
+        os << "# порог тишины: "
+            << std::fixed << std::setprecision(1) << silenceThr << " dB\n\n";
+
+        // === Второй проход: F0, harmonic, highFrac, классификация ===
+        size_t fi = 0;
+        for (int64_t s = 0; s + win <= N; s += hop, ++fi)
+        {
+            for (int i = 0; i < win; ++i) seg[i] = wav.samples[s + i];
+            applyHann(seg);
+            for (int i = 0; i < win; ++i)
+                buf[i] = std::complex<float>(seg[i], 0.0f);
+            fft(buf);
+
+            const int half = win / 2;
+            std::vector<float> mag(half);
+            for (int k = 0; k < half; ++k)
+                mag[k] = std::abs(buf[k]) / (win * 0.5f);
+
+            Frame& fr = frames[fi];
+
+            if (fr.levelDb < silenceThr)
+            {
+                fr.f0Hz = 0.0f;
+                fr.harmonic = 0.0f;
+                fr.highFrac = 0.0f;
+                fr.type = "SILENCE";
+                continue;
+            }
+
+            fr.f0Hz = estimateF0(mag, gMax, sr, win, fMin, fMax);
+            fr.harmonic = estimateHarmonicity(mag, gMax, sr, win, fMin, fMax);
+            // highFrac — доля энергии выше fMax.
+            fr.highFrac = computeHighFrac(mag, sr, win, fMax);
+            fr.type = classify(fr.levelDb, silenceThr, fr.f0Hz,
+                               fr.harmonic, fr.highFrac);
+        }
+
+        smoothFrames(frames);
+        auto events = buildEvents(frames, totalDurMs);
+
+        os << "# КАРТА (события)\n";
+        os << "#   начало(ms)   конец(ms)   дл(ms)   тип       F0нач  F0кон  ампл(дБ)\n";
+
+        for (const auto& e : events)
+        {
+            const double dur = e.endMs - e.startMs;
+            os << "  " << std::setw(10) << std::fixed << std::setprecision(0)
+                << e.startMs << "  "
+                << std::setw(10) << e.endMs << "  "
+                << std::setw(7) << dur << "  "
+                << std::setw(9) << e.type << "  ";
+            if (e.type[0] == 'S')
+                os << "     —       —";
+            else
+            {
+                os << std::setw(6) << e.f0Start << "  "
+                    << std::setw(6) << e.f0End;
+            }
+            os << "  " << std::setw(8) << std::setprecision(1) << e.levelDbMean
+                << "\n";
+        }
+    }
+
+
+        // ============================================================
+    //  Импульсы — короткие всплески выше фона.
+    //
+    //  Шаг 1 мс. Для каждой точки считаем энергию в полосе 3–10 кГц.
+    //  Если она выше локального фона на +10 дБ — это импульс.
+    //  Соседние импульсные точки объединяем в один импульс.
+    // ============================================================
+    void writeImpulses(std::ostream& os, const WavData& wav)
+    {
+        const int sr = wav.sampleRate;
+        const int64_t N = int64_t(wav.samples.size());
+        const int win = 256;         // ~12 мс при 22050
+        const int hop = std::max(1, sr / 1000); // 1 мс
+
+        if (N < win || sr <= 0)
+        {
+            os << "# file too short\n";
+            return;
+        }
+
+        os << "# sound_digit — импульсы (шаг 1 мс, окно " << win << ")\n";
+        os << "# полоса анализа: 3000–10000 Гц\n\n";
+
+        // 1. Считаем энергию в полосе 3–10 кГц для каждой мс.
+        std::vector<std::complex<float>> buf(win);
+        std::vector<float> seg(win);
+        std::vector<float> bandEnergy;
+
+        const int half = win / 2;
+        const float binHz = float(sr) / float(win);
+        const int k3 = std::max(1, int(3000.0f / binHz));
+        const int k10 = std::min(half - 1, int(10000.0f / binHz));
+
+        for (int64_t s = 0; s + win <= N; s += hop)
+        {
+            for (int i = 0; i < win; ++i) seg[i] = wav.samples[s + i];
+            applyHann(seg);
+            for (int i = 0; i < win; ++i)
+                buf[i] = std::complex<float>(seg[i], 0.0f);
+            fft(buf);
+
+            double e = 0.0;
+            for (int k = k3; k <= k10; ++k)
+            {
+                const float m = std::abs(buf[k]) / (win * 0.5f);
+                e += double(m) * m;
+            }
+            bandEnergy.push_back(float(10.0 * std::log10(e + 1e-20)));
+        }
+
+        if (bandEnergy.empty()) return;
+
+        // 2. Локальный фон — медиана в окне ±50 мс.
+        const int FLOOR_HALF = 50;
+        std::vector<float> floorVec(bandEnergy.size());
+        for (size_t i = 0; i < bandEnergy.size(); ++i)
+        {
+            const int lo = std::max(0, int(i) - FLOOR_HALF);
+            const int hi = std::min(int(bandEnergy.size()) - 1, int(i) + FLOOR_HALF);
+            std::vector<float> w(bandEnergy.begin() + lo, bandEnergy.begin() + hi + 1);
+            std::sort(w.begin(), w.end());
+            floorVec[i] = w[w.size() / 2];
+        }
+
+        // 3. Импульс = точка, где bandEnergy > floor + 10 дБ.
+        const float THRESH = 10.0f;
+        std::vector<std::pair<int, int>> impulses; // (начало, конец) в мс
+        int curStart = -1;
+        for (size_t i = 0; i < bandEnergy.size(); ++i)
+        {
+            const bool isImp = (bandEnergy[i] > floorVec[i] + THRESH);
+            if (isImp && curStart < 0) curStart = int(i);
+            else if (!isImp && curStart >= 0)
+            {
+                impulses.push_back({curStart, int(i) - 1});
+                curStart = -1;
+            }
+        }
+        if (curStart >= 0)
+            impulses.push_back({curStart, int(bandEnergy.size()) - 1});
+
+        // 4. Вывод.
+        os << "# ИМПУЛЬСЫ\n";
+        os << "#   #  время(мс)  дл(мс)  уровень(дБ)  над фоном(дБ)\n";
+
+        int idx = 1;
+        for (const auto& p : impulses)
+        {
+            const int len = p.second - p.first + 1;
+            if (len < 1 || len > 30) continue; // отсекаем очень длинные (это не импульс)
+
+            // Пиковый уровень внутри.
+            float peakE = -1000.0f;
+            float peakF = -1000.0f;
+            for (int i = p.first; i <= p.second; ++i)
+            {
+                if (bandEnergy[i] > peakE) peakE = bandEnergy[i];
+                if (floorVec[i] > peakF) peakF = floorVec[i];
+            }
+
+            os << "  " << std::setw(4) << idx++ << "  "
+               << std::setw(7) << p.first << "  "
+               << std::setw(5) << len << "  "
+               << std::setw(9) << std::fixed << std::setprecision(1) << peakE
+               << "  " << std::setw(9) << (peakE - peakF) << "\n";
+        }
+        os << "\n";
+    }
+
+    // ============================================================
+    //  Полосы — энергия в 4 полосах с шагом 2 мс.
+    //  Только в "активных" окнах (где общий уровень выше фона).
+    // ============================================================
+    void writeBands(std::ostream& os, const WavData& wav)
+    {
+        const int sr = wav.sampleRate;
+        const int64_t N = int64_t(wav.samples.size());
+        const int win = 512;
+        const int hop = std::max(1, sr * 5 / 1000); // 5 мс
+
+        if (N < win || sr <= 0)
+        {
+            os << "# file too short\n";
+            return;
+        }
+
+        os << "# sound_digit — полосы (шаг 2 мс)\n";
+        os << "# П1:<1к  П2:1–4к  П3:4–8к  П4:8–11к\n\n";
+
+        std::vector<std::complex<float>> buf(win);
+        std::vector<float> seg(win);
+
+        const int half = win / 2;
+        const float binHz = float(sr) / float(win);
+
+        const int k1 = std::max(1, int(1000.0f / binHz));
+        const int k2 = std::max(k1 + 1, int(4000.0f / binHz));
+        const int k3 = std::max(k2 + 1, int(8000.0f / binHz));
+        const int k4 = std::max(k3 + 1, int(11025.0f / binHz));
+
+        os << "#  время   П1(дБ)  П2(дБ)  П3(дБ)  П4(дБ)\n";
+
+        for (int64_t s = 0; s + win <= N; s += hop)
+        {
+            for (int i = 0; i < win; ++i) seg[i] = wav.samples[s + i];
+            applyHann(seg);
+            for (int i = 0; i < win; ++i)
+                buf[i] = std::complex<float>(seg[i], 0.0f);
+            fft(buf);
+
+            double e1 = 0, e2 = 0, e3 = 0, e4 = 0;
+            for (int k = 1; k < half; ++k)
+            {
+                const float m = std::abs(buf[k]) / (win * 0.5f);
+                const double e = double(m) * m;
+                if (k < k1) e1 += e;
+                else if (k < k2) e2 += e;
+                else if (k < k3) e3 += e;
+                else if (k < k4) e4 += e;
+            }
+
+            const double c1 = std::max(1, k1 - 1);
+            const double c2 = std::max(1, k2 - k1);
+            const double c3 = std::max(1, k3 - k2);
+            const double c4 = std::max(1, k4 - k3);
+
+            auto toDb = [](double v) {
+                return (v > 1e-20) ? float(10.0 * std::log10(v)) : -100.0f;
+            };
+
+            const float db1 = toDb(e1 / c1);
+            const float db2 = toDb(e2 / c2);
+            const float db3 = toDb(e3 / c3);
+            const float db4 = toDb(e4 / c4);
+
+            // Пропускаем очень тихие окна (все полосы < -70 дБ).
+            if (db1 < -70 && db2 < -70 && db3 < -70 && db4 < -70) continue;
+
+            const double tMs = double(s) / double(sr) * 1000.0;
+            os << "  " << std::setw(7) << std::fixed << std::setprecision(0) << tMs
+               << "  " << std::setw(7) << std::setprecision(1) << db1
+               << "  " << std::setw(7) << db2
+               << "  " << std::setw(7) << db3
+               << "  " << std::setw(7) << db4 << "\n";
+        }
+        os << "\n";
+    }
+}
+
+
+
+
+
+// files\sound_digit\src\map.h
+#pragma once
+#include "wav_loader.h"
+#include <ostream>
+
+namespace sd
+{
+    // Построить карту сигнала: где тишина, где тон, где шум.
+    // Вывод — таблица серий (интервалов одного типа).
+    void writeMap(std::ostream& os, const WavData& wav);
+
+    // Список импульсов: короткие всплески выше фона.
+    void writeImpulses(std::ostream& os, const WavData& wav);
+
+    // Энергия в 4 полосах с малым шагом (только в активных окнах).
+    void writeBands(std::ostream& os, const WavData& wav);
+}
+
+
+
+
+
+// files\sound_digit\src\wav_loader.cpp
+#include "wav_loader.h"
+
+#include <fstream>
+#include <stdexcept>
+#include <cstring>
+#include <cmath>
+
+namespace sd
+{
+    namespace
+    {
+        // ------------------------------------------------------------

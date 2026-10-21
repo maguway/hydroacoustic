@@ -1,84 +1,7 @@
-                const float f0Curr = e.frames[i].f0Hz;
-
-                // Если кто-то из пары — 0, это разрыв трека.
-                if (f0Prev <= 0.0f || f0Curr <= 0.0f) continue;
-
-                const float jump = std::fabs(f0Curr - f0Prev)
-                    / std::max(50.0f, f0Prev);
-                const float totalDur = e.frames[i].tMs - e.frames[start].tMs;
-
-                if (jump > SUBEVENT_F0_JUMP && totalDur > MIN_SUBEVENT_MS)
-                {
-                    Event sub;
-                    sub.startMs = e.frames[start].tMs;
-                    sub.endMs = e.frames[i - 1].tMs;
-                    sub.type = e.type;
-                    sub.f0Start = e.frames[start].f0Hz;
-                    sub.f0End = e.frames[i - 1].f0Hz;
-                    float sumL = 0.0f;
-                    for (size_t k = start; k < i; ++k) sumL += e.frames[k].levelDb;
-                    sub.levelDbMean = sumL / float(i - start);
-                    sub.frames.assign(e.frames.begin() + start,
-                                      e.frames.begin() + i);
-                    subs.push_back(sub);
-                    start = i;
-                }
-            }
-            if (start < e.frames.size())
-            {
-                Event sub;
-                sub.startMs = e.frames[start].tMs;
-                sub.endMs = e.frames.back().tMs;
-                sub.type = e.type;
-                sub.f0Start = e.frames[start].f0Hz;
-                sub.f0End = e.frames.back().f0Hz;
-                float sumL = 0.0f;
-                for (size_t k = start; k < e.frames.size(); ++k)
-                    sumL += e.frames[k].levelDb;
-                sub.levelDbMean = sumL / float(e.frames.size() - start);
-                sub.frames.assign(e.frames.begin() + start, e.frames.end());
-                subs.push_back(sub);
-            }
-
-            std::vector<Event> kept;
-            for (auto& s : subs)
-            {
-                const double dur = s.endMs - s.startMs;
-                if (dur < MIN_SUBEVENT_MS && !kept.empty())
-                {
-                    kept.back().endMs = s.endMs;
-                    kept.back().f0End = s.f0End;
-                    for (const auto& fr : s.frames)
-                        kept.back().frames.push_back(fr);
-                    continue;
-                }
-                kept.push_back(s);
-            }
-            return kept;
-        }
-    }
-
-    void writeEvents(std::ostream& os, const WavData& wav)
-    {
-        const int sr = wav.sampleRate;
-        const int64_t N = int64_t(wav.samples.size());
-        const int win = FFT_WIN;
-        const int hop = std::max(1, sr * FRAME_HOP_MS / 1000);
-
-        if (N < win || sr <= 0)
-        {
-            os << "# file too short or sr=0\n";
-            return;
-        }
-
-        const double totalDurMs = double(N) / double(sr) * 1000.0;
-        const float fMin = F0_MIN_HZ;
-        const float fMax = std::min(F0_MAX_HZ, float(sr) * 0.45f);
-
-        os << "# sound_digit v6.2 — события (автокорреляция + медиана)\n";
+        os << "# sound_digit v7 — детали (F0-кривая, огибающая, гармоники)\n";
         os << "# sr=" << sr << ", duration=" << int(totalDurMs) << " ms\n";
         os << "# F0 диапазон: " << int(fMin) << "–" << int(fMax) << " Hz\n";
-        os << "# медианный фильтр F0: окно " << MEDIAN_WIN << " кадров\n\n";
+        os << "# детали для событий > " << int(DETAIL_MIN_DUR_MS) << " ms\n\n";
 
         // Глобальный максимум.
         float gMax = 0.0f;
@@ -156,7 +79,6 @@
                 fr.type = "SILENCE";
                 continue;
             }
-
             const int64_t s = int64_t(i) * hop;
             if (s + win > N)
             {
@@ -164,15 +86,10 @@
                 continue;
             }
 
-            // Копируем сэмплы для автокорреляции (без окна — окно
-            // на автокорреляцию влияет плохо, в отличие от FFT).
             for (int k = 0; k < win; ++k) segAutocorr[k] = wav.samples[s + k];
-
-            // F0 через автокорреляцию.
             float corr = 0.0f;
             fr.f0Hz = estimateF0Autocorr(segAutocorr, sr, fMin, fMax, corr);
 
-            // Спектр для harmonic и highFrac.
             for (int k = 0; k < win; ++k) seg[k] = wav.samples[s + k];
             applyHann(seg);
             for (int k = 0; k < win; ++k)
@@ -190,8 +107,6 @@
         }
 
         smoothFrames(frames);
-
-        // Медианный фильтр по F0 — глобально по всему массиву кадров.
         medianFilterF0(frames);
 
         // События.
@@ -249,35 +164,67 @@
             }
         }
 
-        os << "# СОБЫТИЯ\n";
-        os << "#   #  начало   конец   дл(ms)  тип     F0нач  F0кон  ампл  напр   характер\n";
-
-        int idx = 1;
+        // === Вывод деталей ===
+        int idx = 0;
         for (const auto& e : finalEvents)
         {
+            ++idx;
             const double dur = e.endMs - e.startMs;
-            os << "  " << std::setw(4) << idx++ << "  "
-                << std::setw(7) << std::fixed << std::setprecision(0) << e.startMs << "  "
-                << std::setw(7) << e.endMs << "  "
-                << std::setw(6) << dur << "  "
-                << std::setw(7) << e.type << "  ";
-            if (e.type[0] == 'S' || e.f0Start <= 0.0f)
-                os << "    —  ";
-            else
-                os << std::setw(5) << e.f0Start << "  ";
-            if (e.type[0] == 'S' || e.f0End <= 0.0f)
-                os << "   —  ";
-            else
-                os << std::setw(5) << e.f0End << "  ";
-            os << std::setw(6) << std::setprecision(1) << e.levelDbMean;
 
-            if (e.type[0] == 'T')
+            if (dur < DETAIL_MIN_DUR_MS)
             {
-                const char* dir = directionOf(e.f0Start, e.f0End);
-                const float jit = jitterOf(e.frames);
-                const char* ch = characterOf(jit);
-                os << "  " << std::setw(6) << dir
-                    << "  " << ch;
+                os << "# [" << idx << "] " << e.type
+                    << " " << int(e.startMs) << "–" << int(e.endMs)
+                    << " мс (" << int(dur) << " мс) — короткое, деталей нет\n\n";
+                continue;
+            }
+
+            os << "# ============================================================\n";
+            os << "# Событие " << idx << ": " << e.type
+                << ", " << int(e.startMs) << "–" << int(e.endMs)
+                << " мс, длит " << int(dur) << " мс\n";
+            os << "# F0: " << int(e.f0Start) << " → " << int(e.f0End) << " Гц\n";
+            os << "# амплитуда: " << std::fixed << std::setprecision(1)
+                << e.levelDbMean << " дБ\n";
+            os << "# ------------------------------------------------------------\n";
+            os << "#  время   F0    ампл   гармоники (Гц:отн_дБ)\n";
+
+            for (const auto& fr : e.frames)
+            {
+                os << "  " << std::setw(6) << std::fixed << std::setprecision(0)
+                    << fr.tMs << "  ";
+                if (fr.f0Hz <= 0.0f)
+                    os << "   —  ";
+                else
+                    os << std::setw(5) << fr.f0Hz << "  ";
+                os << std::setw(6) << std::setprecision(1) << fr.levelDb << "  ";
+
+                // Гармоники считаем по свежему спектру этого кадра.
+                if (fr.f0Hz > 0.0f)
+                {
+                    const int64_t s = int64_t(std::round(fr.tMs / 1000.0 * sr));
+                    if (s >= 0 && s + win <= N)
+                    {
+                        for (int k = 0; k < win; ++k) seg[k] = wav.samples[s + k];
+                        applyHann(seg);
+                        for (int k = 0; k < win; ++k)
+                            buf[k] = std::complex<float>(seg[k], 0.0f);
+                        fft(buf);
+                        const int half = win / 2;
+                        std::vector<float> mag(half);
+                        for (int k = 0; k < half; ++k)
+                            mag[k] = std::abs(buf[k]) / (win * 0.5f);
+
+                        auto harms = findHarmonics(mag, sr, win, fr.f0Hz);
+                        for (const auto& h : harms)
+                        {
+                            os << std::setw(5) << std::setprecision(0) << h.freq
+                                << ":" << std::setw(5) << std::setprecision(1)
+                                << h.relDb << "  ";
+                        }
+                    }
+                }
+                os << "\n";
             }
             os << "\n";
         }
@@ -288,249 +235,24 @@
 
 
 
-// files\sound_digit\src\events.h
+// files\sound_digit\src\detail.h
 #pragma once
 #include "wav_loader.h"
 #include <ostream>
 
 namespace sd
 {
-    // Построить список событий: разбор длинных TONE/NOISE на отдельные
-    // подсобытия, добавление характеристик (направление, характер,
-    // гармоники).
-    void writeEvents(std::ostream& os, const WavData& wav);
+    // Построить детальный отчёт: для каждого длинного события
+    // (TONE > 300 мс) — F0-кривая, огибающая, гармоники.
+    void writeDetails(std::ostream& os, const WavData& wav);
 }
 
 
 
 
 
-// files\sound_digit\src\fft.cpp
-#include "fft.h"
-#include <cmath>
-#include <stdexcept>
-
-namespace sd
-{
-    namespace
-    {
-        constexpr float PI_F = 3.14159265358979323846f;
-        constexpr float TWO_PI_F = 6.28318530717958647692f;
-
-        bool isPowerOfTwo(size_t n) { return n > 0 && (n & (n - 1)) == 0; }
-
-        void bitReverse(std::vector<std::complex<float>>& a)
-        {
-            const size_t n = a.size();
-            for (size_t i = 1, j = 0; i < n; ++i)
-            {
-                size_t bit = n >> 1;
-                for (; j & bit; bit >>= 1) j ^= bit;
-                j ^= bit;
-                if (i < j) std::swap(a[i], a[j]);
-            }
-        }
-    }
-
-    void fft(std::vector<std::complex<float>>& data)
-    {
-        const size_t n = data.size();
-        if (n <= 1) return;
-        if (!isPowerOfTwo(n))
-            throw std::runtime_error("FFT size must be power of two");
-
-        bitReverse(data);
-
-        for (size_t len = 2; len <= n; len <<= 1)
-        {
-            const float ang = -TWO_PI_F / static_cast<float>(len);
-            const std::complex<float> wlen(std::cos(ang), std::sin(ang));
-            for (size_t i = 0; i < n; i += len)
-            {
-                std::complex<float> w(1.0f, 0.0f);
-                for (size_t j = 0; j < len / 2; ++j)
-                {
-                    const auto u = data[i + j];
-                    const auto v = data[i + j + len / 2] * w;
-                    data[i + j]              = u + v;
-                    data[i + j + len / 2]    = u - v;
-                    w *= wlen;
-                }
-            }
-        }
-    }
-
-    void applyHann(std::vector<float>& buf)
-    {
-        const size_t n = buf.size();
-        if (n <= 1) return;
-        const float denom = static_cast<float>(n - 1);
-        for (size_t i = 0; i < n; ++i)
-        {
-            const float w = 0.5f * (1.0f - std::cos(TWO_PI_F * float(i) / denom));
-            buf[i] *= w;
-        }
-    }
-}
-
-
-
-
-// files\sound_digit\src\fft.h
-#pragma once
-#include <vector>
-#include <complex>
-
-namespace sd
-{
-    void fft(std::vector<std::complex<float>>& data);
-    void applyHann(std::vector<float>& buf);
-}
-
-
-
-
-// files\sound_digit\src\main.cpp
-#include "wav_loader.h"
-#include "map.h"
-
-#include <windows.h>
-#include <commdlg.h>
-#include <events.h>
-#include <detail.h>
-
-#include <fstream>
-#include <string>
-
-#pragma comment(lib, "comdlg32.lib")
-
-namespace
-{
-    std::string selectWavFile()
-    {
-        char filename[MAX_PATH] = {0};
-        OPENFILENAMEA ofn = {};
-        ofn.lStructSize = sizeof(ofn);
-        ofn.lpstrFilter = "WAV files (*.wav)\0*.wav\0All files (*.*)\0*.*\0";
-        ofn.lpstrFile = filename;
-        ofn.nMaxFile = MAX_PATH;
-        ofn.lpstrTitle = "Выберите WAV-файл";
-        ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
-        if (GetOpenFileNameA(&ofn)) return std::string(filename);
-        return "";
-    }
-
-    std::string baseName(const std::string& path)
-    {
-        auto pos = path.find_last_of("/\\");
-        return (pos == std::string::npos) ? path : path.substr(pos + 1);
-    }
-
-    std::string dirName(const std::string& path)
-    {
-        auto pos = path.find_last_of("/\\");
-        return (pos == std::string::npos) ? "" : path.substr(0, pos);
-    }
-
-    std::string stemName(const std::string& path)
-    {
-        std::string n = baseName(path);
-        auto pos = n.find_last_of('.');
-        return (pos == std::string::npos) ? n : n.substr(0, pos);
-    }
-}
-
-int main()
-{
-    SetConsoleOutputCP(CP_UTF8);
-    SetConsoleCP(CP_UTF8);
-
-    const std::string path = selectWavFile();
-    if (path.empty()) return 0;
-
-    sd::WavData wav;
-    try
-    {
-        wav = sd::loadWav(path);
-    }
-    catch (const std::exception& e)
-    {
-        std::string msg = "Ошибка загрузки:\n";
-        msg += e.what();
-        MessageBoxA(nullptr, msg.c_str(), "sound_digit", MB_OK | MB_ICONERROR);
-        return 2;
-    }
-
-    const std::string outPath = dirName(path) + "\\" + stemName(path) + ".hear.txt";
-
-    std::ofstream f(outPath);
-    if (!f)
-    {
-        MessageBoxA(nullptr, "Не удалось записать отчёт.", "sound_digit",
-                    MB_OK | MB_ICONERROR);
-        return 3;
-    }
-
-    sd::writeMap(f, wav);
-    f.close();
-
-    // Второй файл — события.
-    const std::string evPath = dirName(path) + "\\" + stemName(path) + ".events.txt";
-    std::ofstream fe(evPath);
-    if (fe)
-    {
-        sd::writeEvents(fe, wav);
-        fe.close();
-    }
-
-    // Третий файл — детали.
-    const std::string dtPath = dirName(path) + "\\" + stemName(path) + ".detail.txt";
-    std::ofstream fd(dtPath);
-    if (fd)
-    {
-        sd::writeDetails(fd, wav);
-        fd.close();
-
-        // Четвёртый файл — импульсы.
-        const std::string impPath = dirName(path) + "\\" + stemName(path) + ".impulses.txt";
-        std::ofstream fi(impPath);
-        if (fi)
-        {
-            sd::writeImpulses(fi, wav);
-            fi.close();
-        }
-
-        // Пятый файл — полосы.
-        const std::string bandPath = dirName(path) + "\\" + stemName(path) + ".bands.txt";
-        std::ofstream fb(bandPath);
-        if (fb)
-        {
-            sd::writeBands(fb, wav);
-            fb.close();
-        }
-    }
-
-    ShellExecuteA(nullptr, "open", "notepad.exe",
-                  ("\"" + outPath + "\"").c_str(),
-                  nullptr, SW_SHOWNORMAL);
-
-    ShellExecuteA(nullptr, "open", "notepad.exe",
-                  ("\"" + evPath + "\"").c_str(),
-                  nullptr, SW_SHOWNORMAL);
-
-    ShellExecuteA(nullptr, "open", "notepad.exe",
-                  ("\"" + dtPath + "\"").c_str(),
-                  nullptr, SW_SHOWNORMAL);
-
-    return 0;
-}
-
-
-
-
-
-// files\sound_digit\src\map.cpp
-#include "map.h"
+// files\sound_digit\src\events.cpp
+#include "events.h"
 #include "fft.h"
 
 #include <cmath>
@@ -544,36 +266,44 @@ namespace sd
     namespace
     {
         constexpr float PI_F = 3.14159265358979323846f;
+        constexpr float TWO_PI_F = 6.28318530717958647692f;
 
         // ============================================================
-        //  КАРТА — параметры (v5.3, универсальные)
+        //  СОБЫТИЯ — параметры (v6.2, с автокорреляцией и сглаживанием)
         // ============================================================
 
         constexpr int FRAME_HOP_MS = 25;
         constexpr int FFT_WIN = 1024;
 
-        // Зона поиска F0 — общая для всех сигналов.
         constexpr float F0_MIN_HZ = 100.0f;
         constexpr float F0_MAX_HZ = 8000.0f;
 
-        // Гармоничность: порог «это тон».
         constexpr float HARMONIC_THR_TONE = 0.30f;
+        constexpr float SILENCE_OFFSET_DB = 12.0f;
 
-        // Минимальная длительность события (мс).
         constexpr double MIN_EVENT_MS = 100.0;
 
-        // Адаптивный порог тишины: медиана фона + отступ.
-        constexpr float SILENCE_OFFSET_DB = 12.0f;
+        // Автокорреляция: минимальная корреляция для «есть F0».
+        constexpr float AUTOCORR_MIN = 0.30f;
+
+        // Медианный фильтр по F0.
+        constexpr int MEDIAN_WIN = 5;
+
+        // Разбиение длинных TONE.
+        constexpr float SUBEVENT_F0_JUMP = 0.25f;
+        constexpr double MIN_SUBEVENT_MS = 80.0;
+
+        constexpr float STR_FREQ_FRAC = 0.60f;
 
         // ============================================================
 
         struct Frame
         {
             double tMs;
-            float levelDb; // нормированный на медиану фона
+            float levelDb;
             float f0Hz;
             float harmonic;
-            float highFrac; // доля энергии выше F0_MAX/2
+            float highFrac;
             const char* type;
         };
 
@@ -594,22 +324,76 @@ namespace sd
             return peaks;
         }
 
+        // ============================================================
+        //  Оценка F0 через автокорреляцию.
+        //
+        //  Для диапазона [fMin, fMax] находим период T = sr/f,
+        //  считаем нормированную автокорреляцию, берём максимум.
+        //  Это устойчивее к гармоникам, чем поиск пиков в спектре.
+        // ============================================================
+        float estimateF0Autocorr(const std::vector<float>& samples,
+                                 int sr, float fMin, float fMax,
+                                 float& outCorr)
+        {
+            outCorr = 0.0f;
+            const int n = int(samples.size());
+            if (n < 64) return 0.0f;
+
+            // Центрируем сигнал.
+            double mean = 0.0;
+            for (float v : samples) mean += v;
+            mean /= double(n);
+
+            std::vector<float> x(n);
+            for (int i = 0; i < n; ++i) x[i] = float(samples[i] - mean);
+
+            // Нормировочный множитель (энергия).
+            double energy = 0.0;
+            for (int i = 0; i < n; ++i) energy += double(x[i]) * x[i];
+            if (energy < 1e-12) return 0.0f;
+
+            // Периоды (лаг в сэмплах).
+            const int lagMin = std::max(2, int(float(sr) / fMax));
+            const int lagMax = std::min(n / 2, int(float(sr) / fMin));
+            if (lagMax <= lagMin) return 0.0f;
+
+            float bestLag = 0.0f;
+            float bestCorr = 0.0f;
+
+            for (int lag = lagMin; lag <= lagMax; ++lag)
+            {
+                double sum = 0.0;
+                for (int i = 0; i + lag < n; ++i)
+                    sum += double(x[i]) * x[i + lag];
+
+                const float corr = float(sum / energy);
+
+                // Ищем локальный максимум автокорреляции.
+                if (corr > bestCorr && corr > AUTOCORR_MIN)
+                {
+                    bestCorr = corr;
+                    bestLag = float(lag);
+                }
+            }
+
+            if (bestLag <= 0.0f) return 0.0f;
+            outCorr = bestCorr;
+            return float(sr) / bestLag;
+        }
+
         float estimateHarmonicity(const std::vector<float>& mag,
                                   float maxMag, int sr, int fftSize,
                                   float fMin, float fMax)
         {
             auto peaks = findPeaks(mag, maxMag, -40.0f);
             if (peaks.size() < 2) return 0.0f;
-
             const float binHz = float(sr) / float(fftSize);
             int totalChecked = 0, harmonicCount = 0;
-
             for (const auto& p : peaks)
             {
                 const float f1 = float(p.first) * binHz;
                 if (f1 < fMin || f1 > fMax) continue;
                 ++totalChecked;
-
                 bool has2 = false, has3 = false;
                 for (const auto& q : peaks)
                 {
@@ -620,41 +404,16 @@ namespace sd
                 }
                 if (has2 || has3) ++harmonicCount;
             }
-
             if (totalChecked == 0) return 0.0f;
             return float(harmonicCount) / float(totalChecked);
         }
 
-        float estimateF0(const std::vector<float>& mag, float maxMag,
-                         int sr, int fftSize,
-                         float fMin, float fMax)
-        {
-            auto peaks = findPeaks(mag, maxMag, -40.0f);
-            if (peaks.empty()) return 0.0f;
-
-            const float binHz = float(sr) / float(fftSize);
-            float bestF = 0.0f, bestMag = 0.0f;
-            for (const auto& p : peaks)
-            {
-                const float f = float(p.first) * binHz;
-                if (f < fMin || f > fMax) continue;
-                if (p.second > bestMag)
-                {
-                    bestMag = p.second;
-                    bestF = f;
-                }
-            }
-            return bestF;
-        }
-
-        // Доля энергии выше границы (для классификации STR).
         float computeHighFrac(const std::vector<float>& mag, int sr, int fftSize,
                               float boundaryHz)
         {
             const int half = int(mag.size());
             const float binHz = float(sr) / float(fftSize);
             const int kb = std::max(1, int(boundaryHz / binHz));
-
             double eLow = 0.0, eHigh = 0.0;
             for (int k = 2; k < half; ++k)
             {
@@ -668,18 +427,16 @@ namespace sd
         }
 
         const char* classify(float levelDb, float silenceThr,
-                             float f0, float harmonic, float highFrac)
+                             float f0, float harmonic, float highFrac,
+                             float fMax)
         {
             if (levelDb < silenceThr) return "SILENCE";
             if (harmonic >= HARMONIC_THR_TONE)
             {
-                // Тон. Если у него бОльшая часть энергии — в верхней
-                // половине спектра и он шумный — это стрёкот.
-                // Иначе — обычный тон.
-                if (highFrac > 0.75f && f0 == 0.0f) return "STR";
+                if (f0 > fMax * STR_FREQ_FRAC) return "STR";
+                if (f0 == 0.0f && highFrac > 0.75f) return "STR";
                 return "TONE";
             }
-            // Не гармонично. Если много энергии наверху — STR.
             if (highFrac > 0.75f) return "STR";
             return "NOISE";
         }
@@ -701,441 +458,95 @@ namespace sd
             }
         }
 
+        // ============================================================
+        //  Медианный фильтр по F0 внутри массива кадров.
+        // ============================================================
+        void medianFilterF0(std::vector<Frame>& frames)
+        {
+            const int n = int(frames.size());
+            if (n < MEDIAN_WIN) return;
+
+            std::vector<float> src(n);
+            for (int i = 0; i < n; ++i) src[i] = frames[i].f0Hz;
+
+            const int half = MEDIAN_WIN / 2;
+            std::vector<float> win;
+            win.reserve(MEDIAN_WIN);
+
+            for (int i = 0; i < n; ++i)
+            {
+                win.clear();
+                for (int j = -half; j <= half; ++j)
+                {
+                    const int k = i + j;
+                    if (k < 0 || k >= n) continue;
+                    if (src[k] <= 0.0f) continue;
+                    win.push_back(src[k]);
+                }
+                if (win.empty())
+                {
+                    frames[i].f0Hz = 0.0f;
+                    continue;
+                }
+                std::sort(win.begin(), win.end());
+                frames[i].f0Hz = win[win.size() / 2];
+            }
+        }
+
         struct Event
         {
             double startMs, endMs;
             const char* type;
             float f0Start, f0End;
             float levelDbMean;
+            std::vector<Frame> frames;
         };
 
-        std::vector<Event> buildEvents(const std::vector<Frame>& frames,
-                                       double totalDurMs)
+        const char* directionOf(float f0Start, float f0End)
         {
-            std::vector<Event> events;
-            if (frames.empty()) return events;
+            if (f0Start <= 0.0f || f0End <= 0.0f) return "—";
+            const float d = (f0End - f0Start) / std::max(50.0f, f0Start);
+            if (d > 0.20f) return "вверх";
+            if (d < -0.20f) return "вниз";
+            return "ровно";
+        }
 
-            int i = 0;
-            while (i < int(frames.size()))
+        float jitterOf(const std::vector<Frame>& frames)
+        {
+            float sum = 0.0f;
+            int cnt = 0;
+            float prev = 0.0f;
+            for (const auto& fr : frames)
             {
-                const char* t = frames[i].type;
-                int j = i + 1;
-                while (j < int(frames.size()) && frames[j].type == t) ++j;
-
-                Event e;
-                e.startMs = frames[i].tMs;
-                e.endMs = (j < int(frames.size())) ? frames[j].tMs : totalDurMs;
-                e.type = t;
-                e.f0Start = frames[i].f0Hz;
-                e.f0End = frames[j - 1].f0Hz;
-                float sumL = 0.0f;
-                for (int k = i; k < j; ++k) sumL += frames[k].levelDb;
-                e.levelDbMean = sumL / float(j - i);
-                events.push_back(e);
-                i = j;
-            }
-
-            std::vector<Event> merged;
-            for (const auto& e : events)
-            {
-                const double dur = e.endMs - e.startMs;
-                if (dur < MIN_EVENT_MS && !merged.empty())
+                if (fr.f0Hz <= 0.0f) continue;
+                if (prev > 0.0f)
                 {
-                    merged.back().endMs = e.endMs;
-                    merged.back().levelDbMean =
-                        0.5f * (merged.back().levelDbMean + e.levelDbMean);
-                    continue;
+                    sum += std::fabs(fr.f0Hz - prev) / std::max(50.0f, prev);
+                    ++cnt;
                 }
-                merged.push_back(e);
+                prev = fr.f0Hz;
             }
-            return merged;
-        }
-    }
-
-    void writeMap(std::ostream& os, const WavData& wav)
-    {
-        const int sr = wav.sampleRate;
-        const int64_t N = int64_t(wav.samples.size());
-        const int win = FFT_WIN;
-        const int hop = std::max(1, sr * FRAME_HOP_MS / 1000);
-
-        if (N < win || sr <= 0)
-        {
-            os << "# file too short or sr=0\n";
-            return;
+            if (cnt == 0) return 0.0f;
+            return sum / float(cnt);
         }
 
-        const double totalDurMs = double(N) / double(sr) * 1000.0;
-
-        // === Адаптивные границы для F0 ===
-        float fMin = F0_MIN_HZ;
-        float fMax = std::min(F0_MAX_HZ, float(sr) * 0.45f);
-
-        os << "# sound_digit v5.3 — карта сигнала (универсальная)\n";
-        os << "# sr=" << sr << ", duration=" << int(totalDurMs) << " ms"
-            << ", win=" << win << ", hop=" << FRAME_HOP_MS << " ms\n";
-        os << "# F0 диапазон: " << int(fMin) << "–" << int(fMax) << " Hz\n";
-        os << "# STR порог по highFrac: 0.75\n\n";
-
-        // === Глобальный максимум магнитуды ===
-        float gMax = 0.0f;
+        const char* characterOf(float jitter)
         {
-            std::vector<std::complex<float>> buf(win);
-            std::vector<float> seg(win);
-            for (int64_t s = 0; s + win <= N; s += hop)
+            if (jitter < 0.03f) return "плавно";
+            if (jitter < 0.10f) return "слегка дрожит";
+            return "дрожит";
+        }
+
+        std::vector<Event> splitTone(const Event& e)
+        {
+            std::vector<Event> subs;
+            if (e.frames.size() < 3)
             {
-                for (int i = 0; i < win; ++i) seg[i] = wav.samples[s + i];
-                applyHann(seg);
-                for (int i = 0; i < win; ++i)
-                    buf[i] = std::complex<float>(seg[i], 0.0f);
-                fft(buf);
-                for (int k = 2; k < win / 2; ++k)
-                {
-                    const float m = std::abs(buf[k]) / (win * 0.5f);
-                    if (m > gMax) gMax = m;
-                }
+                subs.push_back(e);
+                return subs;
             }
-            if (gMax < 1e-9f) gMax = 1.0f;
-        }
 
-        // === Первый проход: уровни и поиск медианы фона ===
-        std::vector<Frame> frames;
-        std::vector<std::complex<float>> buf(win);
-        std::vector<float> seg(win);
-        std::vector<float> levelRaw;
+            size_t start = 0;
 
-        for (int64_t s = 0; s + win <= N; s += hop)
-        {
-            for (int i = 0; i < win; ++i) seg[i] = wav.samples[s + i];
-            applyHann(seg);
-            for (int i = 0; i < win; ++i)
-                buf[i] = std::complex<float>(seg[i], 0.0f);
-            fft(buf);
-
-            const int half = win / 2;
-            double eTot = 0.0;
-            for (int k = 2; k < half; ++k)
+            for (size_t i = 1; i < e.frames.size(); ++i)
             {
-                const float m = std::abs(buf[k]) / (win * 0.5f);
-                eTot += double(m) * m;
-            }
-            const float levelDb = (eTot > 1e-20)
-                                      ? float(10.0 * std::log10(eTot / double(half)))
-                                      : -120.0f;
-            levelRaw.push_back(levelDb);
-
-            Frame fr;
-            fr.tMs = double(s) / double(sr) * 1000.0;
-            fr.levelDb = levelDb;
-            fr.f0Hz = 0.0f;
-            fr.harmonic = 0.0f;
-            fr.highFrac = 0.0f;
-            fr.type = "SILENCE";
-            frames.push_back(fr);
-        }
-
-        // Медиана фона — берём нижние 25% кадров и находим медиану.
-        std::vector<float> sorted = levelRaw;
-        std::sort(sorted.begin(), sorted.end());
-        const size_t cut = std::max<size_t>(1, sorted.size() / 4);
-        const float noiseFloor =
-            sorted[cut / 2]; // медиана нижней четверти
-
-        // Адаптивный порог тишины.
-        const float silenceThr = noiseFloor + SILENCE_OFFSET_DB;
-
-        os << "# фон (медиана нижней четверти): "
-            << std::fixed << std::setprecision(1) << noiseFloor << " dB\n";
-        os << "# порог тишины: "
-            << std::fixed << std::setprecision(1) << silenceThr << " dB\n\n";
-
-        // === Второй проход: F0, harmonic, highFrac, классификация ===
-        size_t fi = 0;
-        for (int64_t s = 0; s + win <= N; s += hop, ++fi)
-        {
-            for (int i = 0; i < win; ++i) seg[i] = wav.samples[s + i];
-            applyHann(seg);
-            for (int i = 0; i < win; ++i)
-                buf[i] = std::complex<float>(seg[i], 0.0f);
-            fft(buf);
-
-            const int half = win / 2;
-            std::vector<float> mag(half);
-            for (int k = 0; k < half; ++k)
-                mag[k] = std::abs(buf[k]) / (win * 0.5f);
-
-            Frame& fr = frames[fi];
-
-            if (fr.levelDb < silenceThr)
-            {
-                fr.f0Hz = 0.0f;
-                fr.harmonic = 0.0f;
-                fr.highFrac = 0.0f;
-                fr.type = "SILENCE";
-                continue;
-            }
-
-            fr.f0Hz = estimateF0(mag, gMax, sr, win, fMin, fMax);
-            fr.harmonic = estimateHarmonicity(mag, gMax, sr, win, fMin, fMax);
-            // highFrac — доля энергии выше fMax.
-            fr.highFrac = computeHighFrac(mag, sr, win, fMax);
-            fr.type = classify(fr.levelDb, silenceThr, fr.f0Hz,
-                               fr.harmonic, fr.highFrac);
-        }
-
-        smoothFrames(frames);
-        auto events = buildEvents(frames, totalDurMs);
-
-        os << "# КАРТА (события)\n";
-        os << "#   начало(ms)   конец(ms)   дл(ms)   тип       F0нач  F0кон  ампл(дБ)\n";
-
-        for (const auto& e : events)
-        {
-            const double dur = e.endMs - e.startMs;
-            os << "  " << std::setw(10) << std::fixed << std::setprecision(0)
-                << e.startMs << "  "
-                << std::setw(10) << e.endMs << "  "
-                << std::setw(7) << dur << "  "
-                << std::setw(9) << e.type << "  ";
-            if (e.type[0] == 'S')
-                os << "     —       —";
-            else
-            {
-                os << std::setw(6) << e.f0Start << "  "
-                    << std::setw(6) << e.f0End;
-            }
-            os << "  " << std::setw(8) << std::setprecision(1) << e.levelDbMean
-                << "\n";
-        }
-    }
-
-
-        // ============================================================
-    //  Импульсы — короткие всплески выше фона.
-    //
-    //  Шаг 1 мс. Для каждой точки считаем энергию в полосе 3–10 кГц.
-    //  Если она выше локального фона на +10 дБ — это импульс.
-    //  Соседние импульсные точки объединяем в один импульс.
-    // ============================================================
-    void writeImpulses(std::ostream& os, const WavData& wav)
-    {
-        const int sr = wav.sampleRate;
-        const int64_t N = int64_t(wav.samples.size());
-        const int win = 256;         // ~12 мс при 22050
-        const int hop = std::max(1, sr / 1000); // 1 мс
-
-        if (N < win || sr <= 0)
-        {
-            os << "# file too short\n";
-            return;
-        }
-
-        os << "# sound_digit — импульсы (шаг 1 мс, окно " << win << ")\n";
-        os << "# полоса анализа: 3000–10000 Гц\n\n";
-
-        // 1. Считаем энергию в полосе 3–10 кГц для каждой мс.
-        std::vector<std::complex<float>> buf(win);
-        std::vector<float> seg(win);
-        std::vector<float> bandEnergy;
-
-        const int half = win / 2;
-        const float binHz = float(sr) / float(win);
-        const int k3 = std::max(1, int(3000.0f / binHz));
-        const int k10 = std::min(half - 1, int(10000.0f / binHz));
-
-        for (int64_t s = 0; s + win <= N; s += hop)
-        {
-            for (int i = 0; i < win; ++i) seg[i] = wav.samples[s + i];
-            applyHann(seg);
-            for (int i = 0; i < win; ++i)
-                buf[i] = std::complex<float>(seg[i], 0.0f);
-            fft(buf);
-
-            double e = 0.0;
-            for (int k = k3; k <= k10; ++k)
-            {
-                const float m = std::abs(buf[k]) / (win * 0.5f);
-                e += double(m) * m;
-            }
-            bandEnergy.push_back(float(10.0 * std::log10(e + 1e-20)));
-        }
-
-        if (bandEnergy.empty()) return;
-
-        // 2. Локальный фон — медиана в окне ±50 мс.
-        const int FLOOR_HALF = 50;
-        std::vector<float> floorVec(bandEnergy.size());
-        for (size_t i = 0; i < bandEnergy.size(); ++i)
-        {
-            const int lo = std::max(0, int(i) - FLOOR_HALF);
-            const int hi = std::min(int(bandEnergy.size()) - 1, int(i) + FLOOR_HALF);
-            std::vector<float> w(bandEnergy.begin() + lo, bandEnergy.begin() + hi + 1);
-            std::sort(w.begin(), w.end());
-            floorVec[i] = w[w.size() / 2];
-        }
-
-        // 3. Импульс = точка, где bandEnergy > floor + 10 дБ.
-        const float THRESH = 10.0f;
-        std::vector<std::pair<int, int>> impulses; // (начало, конец) в мс
-        int curStart = -1;
-        for (size_t i = 0; i < bandEnergy.size(); ++i)
-        {
-            const bool isImp = (bandEnergy[i] > floorVec[i] + THRESH);
-            if (isImp && curStart < 0) curStart = int(i);
-            else if (!isImp && curStart >= 0)
-            {
-                impulses.push_back({curStart, int(i) - 1});
-                curStart = -1;
-            }
-        }
-        if (curStart >= 0)
-            impulses.push_back({curStart, int(bandEnergy.size()) - 1});
-
-        // 4. Вывод.
-        os << "# ИМПУЛЬСЫ\n";
-        os << "#   #  время(мс)  дл(мс)  уровень(дБ)  над фоном(дБ)\n";
-
-        int idx = 1;
-        for (const auto& p : impulses)
-        {
-            const int len = p.second - p.first + 1;
-            if (len < 1 || len > 30) continue; // отсекаем очень длинные (это не импульс)
-
-            // Пиковый уровень внутри.
-            float peakE = -1000.0f;
-            float peakF = -1000.0f;
-            for (int i = p.first; i <= p.second; ++i)
-            {
-                if (bandEnergy[i] > peakE) peakE = bandEnergy[i];
-                if (floorVec[i] > peakF) peakF = floorVec[i];
-            }
-
-            os << "  " << std::setw(4) << idx++ << "  "
-               << std::setw(7) << p.first << "  "
-               << std::setw(5) << len << "  "
-               << std::setw(9) << std::fixed << std::setprecision(1) << peakE
-               << "  " << std::setw(9) << (peakE - peakF) << "\n";
-        }
-        os << "\n";
-    }
-
-    // ============================================================
-    //  Полосы — энергия в 4 полосах с шагом 2 мс.
-    //  Только в "активных" окнах (где общий уровень выше фона).
-    // ============================================================
-    void writeBands(std::ostream& os, const WavData& wav)
-    {
-        const int sr = wav.sampleRate;
-        const int64_t N = int64_t(wav.samples.size());
-        const int win = 512;
-        const int hop = std::max(1, sr * 5 / 1000); // 5 мс
-
-        if (N < win || sr <= 0)
-        {
-            os << "# file too short\n";
-            return;
-        }
-
-        os << "# sound_digit — полосы (шаг 2 мс)\n";
-        os << "# П1:<1к  П2:1–4к  П3:4–8к  П4:8–11к\n\n";
-
-        std::vector<std::complex<float>> buf(win);
-        std::vector<float> seg(win);
-
-        const int half = win / 2;
-        const float binHz = float(sr) / float(win);
-
-        const int k1 = std::max(1, int(1000.0f / binHz));
-        const int k2 = std::max(k1 + 1, int(4000.0f / binHz));
-        const int k3 = std::max(k2 + 1, int(8000.0f / binHz));
-        const int k4 = std::max(k3 + 1, int(11025.0f / binHz));
-
-        os << "#  время   П1(дБ)  П2(дБ)  П3(дБ)  П4(дБ)\n";
-
-        for (int64_t s = 0; s + win <= N; s += hop)
-        {
-            for (int i = 0; i < win; ++i) seg[i] = wav.samples[s + i];
-            applyHann(seg);
-            for (int i = 0; i < win; ++i)
-                buf[i] = std::complex<float>(seg[i], 0.0f);
-            fft(buf);
-
-            double e1 = 0, e2 = 0, e3 = 0, e4 = 0;
-            for (int k = 1; k < half; ++k)
-            {
-                const float m = std::abs(buf[k]) / (win * 0.5f);
-                const double e = double(m) * m;
-                if (k < k1) e1 += e;
-                else if (k < k2) e2 += e;
-                else if (k < k3) e3 += e;
-                else if (k < k4) e4 += e;
-            }
-
-            const double c1 = std::max(1, k1 - 1);
-            const double c2 = std::max(1, k2 - k1);
-            const double c3 = std::max(1, k3 - k2);
-            const double c4 = std::max(1, k4 - k3);
-
-            auto toDb = [](double v) {
-                return (v > 1e-20) ? float(10.0 * std::log10(v)) : -100.0f;
-            };
-
-            const float db1 = toDb(e1 / c1);
-            const float db2 = toDb(e2 / c2);
-            const float db3 = toDb(e3 / c3);
-            const float db4 = toDb(e4 / c4);
-
-            // Пропускаем очень тихие окна (все полосы < -70 дБ).
-            if (db1 < -70 && db2 < -70 && db3 < -70 && db4 < -70) continue;
-
-            const double tMs = double(s) / double(sr) * 1000.0;
-            os << "  " << std::setw(7) << std::fixed << std::setprecision(0) << tMs
-               << "  " << std::setw(7) << std::setprecision(1) << db1
-               << "  " << std::setw(7) << db2
-               << "  " << std::setw(7) << db3
-               << "  " << std::setw(7) << db4 << "\n";
-        }
-        os << "\n";
-    }
-}
-
-
-
-
-
-// files\sound_digit\src\map.h
-#pragma once
-#include "wav_loader.h"
-#include <ostream>
-
-namespace sd
-{
-    // Построить карту сигнала: где тишина, где тон, где шум.
-    // Вывод — таблица серий (интервалов одного типа).
-    void writeMap(std::ostream& os, const WavData& wav);
-
-    // Список импульсов: короткие всплески выше фона.
-    void writeImpulses(std::ostream& os, const WavData& wav);
-
-    // Энергия в 4 полосах с малым шагом (только в активных окнах).
-    void writeBands(std::ostream& os, const WavData& wav);
-}
-
-
-
-
-
-// files\sound_digit\src\wav_loader.cpp
-#include "wav_loader.h"
-
-#include <fstream>
-#include <stdexcept>
-#include <cstring>
-#include <cmath>
-
-namespace sd
-{
-    namespace
-    {
-        // ------------------------------------------------------------
-        //  Чтение little-endian целых из потока.

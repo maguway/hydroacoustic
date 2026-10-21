@@ -1,229 +1,610 @@
-        // ------------------------------------------------------------
-        uint32_t readU32(std::ifstream& f)
-        {
-            uint8_t b[4];
-            f.read(reinterpret_cast<char*>(b), 4);
-            return uint32_t(b[0]) | (uint32_t(b[1]) << 8)
-                | (uint32_t(b[2]) << 16) | (uint32_t(b[3]) << 24);
-        }
+                const float f0Prev = e.frames[i - 1].f0Hz;
+                const float f0Curr = e.frames[i].f0Hz;
 
-        uint16_t readU16(std::ifstream& f)
-        {
-            uint8_t b[2];
-            f.read(reinterpret_cast<char*>(b), 2);
-            return uint16_t(b[0]) | (uint16_t(b[1]) << 8);
-        }
+                // Если кто-то из пары — 0, это разрыв трека.
+                if (f0Prev <= 0.0f || f0Curr <= 0.0f) continue;
 
-        // ------------------------------------------------------------
-        //  Нормализация сэмпла в float [-1..1] в зависимости от битности.
-        // ------------------------------------------------------------
-        float normalizeSample(const uint8_t* buf, int bitsPerSample, bool isFloat)
-        {
-            if (isFloat && bitsPerSample == 32)
-            {
-                float v;
-                std::memcpy(&v, buf, 4);
-                return v;
-            }
+                const float jump = std::fabs(f0Curr - f0Prev)
+                    / std::max(50.0f, f0Prev);
+                const float totalDur = e.frames[i].tMs - e.frames[start].tMs;
 
-            if (bitsPerSample == 8)
-            {
-                // 8-битный WAV — unsigned, центр 128
-                int v = int(buf[0]) - 128;
-                return float(v) / 128.0f;
-            }
-            if (bitsPerSample == 16)
-            {
-                int16_t v;
-                std::memcpy(&v, buf, 2);
-                return float(v) / 32768.0f;
-            }
-            if (bitsPerSample == 24)
-            {
-                // 24 бита little-endian signed
-                int32_t v = int32_t(buf[0]) | (int32_t(buf[1]) << 8) | (int32_t(buf[2]) << 16);
-                if (v & 0x800000) v |= ~0xFFFFFF; // знаковое расширение
-                return float(v) / 8388608.0f;
-            }
-            if (bitsPerSample == 32)
-            {
-                int32_t v;
-                std::memcpy(&v, buf, 4);
-                return float(v) / 2147483648.0f;
-            }
-
-            throw std::runtime_error("unsupported bits per sample");
-        }
-    } // namespace
-
-    // ------------------------------------------------------------
-    //  Основная функция загрузки.
-    // ------------------------------------------------------------
-    WavData loadWav(const std::string& path)
-    {
-        std::ifstream f(path, std::ios::binary);
-        if (!f) throw std::runtime_error("cannot open file: " + path);
-
-        // --- RIFF header ---
-        char riff[4];
-        f.read(riff, 4);
-        if (std::strncmp(riff, "RIFF", 4) != 0)
-            throw std::runtime_error("not a RIFF file");
-
-        readU32(f); // riff size, не нужен
-
-        char wave[4];
-        f.read(wave, 4);
-        if (std::strncmp(wave, "WAVE", 4) != 0)
-            throw std::runtime_error("not a WAVE file");
-
-        // --- Ищем fmt и data чанки ---
-        uint16_t audioFormat = 0;
-        uint16_t numChannels = 0;
-        uint32_t sampleRate = 0;
-        uint16_t bitsPerSample = 0;
-        bool foundFmt = false;
-        bool foundData = false;
-        std::streampos dataPos;
-        uint32_t dataSize = 0;
-
-        while (f && !(foundFmt && foundData))
-        {
-            char chunkId[4];
-            f.read(chunkId, 4);
-            if (!f) break;
-
-            uint32_t chunkSize = readU32(f);
-
-            if (std::strncmp(chunkId, "fmt ", 4) == 0)
-            {
-                audioFormat = readU16(f);
-                numChannels = readU16(f);
-                sampleRate = readU32(f);
-                readU32(f); // byte rate
-                readU16(f); // block align
-                bitsPerSample = readU16(f);
-
-                // Пропускаем остаток чанка (если есть)
-                if (chunkSize > 16)
+                if (jump > SUBEVENT_F0_JUMP && totalDur > MIN_SUBEVENT_MS)
                 {
-                    f.seekg(chunkSize - 16, std::ios::cur);
+                    Event sub;
+                    sub.startMs = e.frames[start].tMs;
+                    sub.endMs = e.frames[i - 1].tMs;
+                    sub.type = e.type;
+                    sub.f0Start = e.frames[start].f0Hz;
+                    sub.f0End = e.frames[i - 1].f0Hz;
+                    float sumL = 0.0f;
+                    for (size_t k = start; k < i; ++k) sumL += e.frames[k].levelDb;
+                    sub.levelDbMean = sumL / float(i - start);
+                    sub.frames.assign(e.frames.begin() + start,
+                                      e.frames.begin() + i);
+                    subs.push_back(sub);
+                    start = i;
                 }
-                foundFmt = true;
             }
-            else if (std::strncmp(chunkId, "data", 4) == 0)
+            if (start < e.frames.size())
             {
-                dataPos = f.tellg();
-                dataSize = chunkSize;
-                foundData = true;
-                // Не читаем сейчас — вернёмся после fmt.
-                // Если fmt уже был — выходим.
-                if (foundFmt) break;
-                f.seekg(chunkSize, std::ios::cur);
+                Event sub;
+                sub.startMs = e.frames[start].tMs;
+                sub.endMs = e.frames.back().tMs;
+                sub.type = e.type;
+                sub.f0Start = e.frames[start].f0Hz;
+                sub.f0End = e.frames.back().f0Hz;
+                float sumL = 0.0f;
+                for (size_t k = start; k < e.frames.size(); ++k)
+                    sumL += e.frames[k].levelDb;
+                sub.levelDbMean = sumL / float(e.frames.size() - start);
+                sub.frames.assign(e.frames.begin() + start, e.frames.end());
+                subs.push_back(sub);
+            }
+
+            std::vector<Event> kept;
+            for (auto& s : subs)
+            {
+                const double dur = s.endMs - s.startMs;
+                if (dur < MIN_SUBEVENT_MS && !kept.empty())
+                {
+                    kept.back().endMs = s.endMs;
+                    kept.back().f0End = s.f0End;
+                    for (const auto& fr : s.frames)
+                        kept.back().frames.push_back(fr);
+                    continue;
+                }
+                kept.push_back(s);
+            }
+            return kept;
+        }
+    }
+
+    void writeEvents(std::ostream& os, const WavData& wav)
+    {
+        const int sr = wav.sampleRate;
+        const int64_t N = int64_t(wav.samples.size());
+        const int win = FFT_WIN;
+        const int hop = std::max(1, sr * FRAME_HOP_MS / 1000);
+
+        if (N < win || sr <= 0)
+        {
+            os << "# file too short or sr=0\n";
+            return;
+        }
+
+        const double totalDurMs = double(N) / double(sr) * 1000.0;
+        const float fMin = F0_MIN_HZ;
+        const float fMax = std::min(F0_MAX_HZ, float(sr) * 0.45f);
+
+        os << "# sound_digit v6.2 — события (автокорреляция + медиана)\n";
+        os << "# sr=" << sr << ", duration=" << int(totalDurMs) << " ms\n";
+        os << "# F0 диапазон: " << int(fMin) << "–" << int(fMax) << " Hz\n";
+        os << "# медианный фильтр F0: окно " << MEDIAN_WIN << " кадров\n\n";
+
+        // Глобальный максимум.
+        float gMax = 0.0f;
+        {
+            std::vector<std::complex<float>> buf(win);
+            std::vector<float> seg(win);
+            for (int64_t s = 0; s + win <= N; s += hop)
+            {
+                for (int i = 0; i < win; ++i) seg[i] = wav.samples[s + i];
+                applyHann(seg);
+                for (int i = 0; i < win; ++i)
+                    buf[i] = std::complex<float>(seg[i], 0.0f);
+                fft(buf);
+                for (int k = 2; k < win / 2; ++k)
+                {
+                    const float m = std::abs(buf[k]) / (win * 0.5f);
+                    if (m > gMax) gMax = m;
+                }
+            }
+            if (gMax < 1e-9f) gMax = 1.0f;
+        }
+
+        // Первый проход: уровни и фон.
+        std::vector<Frame> frames;
+        std::vector<std::complex<float>> buf(win);
+        std::vector<float> seg(win);
+        std::vector<float> levelRaw;
+
+        for (int64_t s = 0; s + win <= N; s += hop)
+        {
+            for (int i = 0; i < win; ++i) seg[i] = wav.samples[s + i];
+            applyHann(seg);
+            for (int i = 0; i < win; ++i)
+                buf[i] = std::complex<float>(seg[i], 0.0f);
+            fft(buf);
+            const int half = win / 2;
+            double eTot = 0.0;
+            for (int k = 2; k < half; ++k)
+            {
+                const float m = std::abs(buf[k]) / (win * 0.5f);
+                eTot += double(m) * m;
+            }
+            const float levelDb = (eTot > 1e-20)
+                                      ? float(10.0 * std::log10(eTot / double(half)))
+                                      : -120.0f;
+            levelRaw.push_back(levelDb);
+
+            Frame fr;
+            fr.tMs = double(s) / double(sr) * 1000.0;
+            fr.levelDb = levelDb;
+            fr.f0Hz = 0.0f;
+            fr.harmonic = 0.0f;
+            fr.highFrac = 0.0f;
+            fr.type = "SILENCE";
+            frames.push_back(fr);
+        }
+
+        std::vector<float> sorted = levelRaw;
+        std::sort(sorted.begin(), sorted.end());
+        const size_t cut = std::max<size_t>(1, sorted.size() / 4);
+        const float noiseFloor = sorted[cut / 2];
+        const float silenceThr = noiseFloor + SILENCE_OFFSET_DB;
+
+        os << "# фон: " << std::fixed << std::setprecision(1) << noiseFloor
+            << " dB, порог тишины: " << silenceThr << " dB\n\n";
+
+        // Второй проход: F0 через автокорреляцию.
+        std::vector<float> segAutocorr(win);
+
+        for (size_t i = 0; i < frames.size(); ++i)
+        {
+            Frame& fr = frames[i];
+            if (fr.levelDb < silenceThr)
+            {
+                fr.type = "SILENCE";
+                continue;
+            }
+
+            const int64_t s = int64_t(i) * hop;
+            if (s + win > N)
+            {
+                fr.type = "NOISE";
+                continue;
+            }
+
+            // Копируем сэмплы для автокорреляции (без окна — окно
+            // на автокорреляцию влияет плохо, в отличие от FFT).
+            for (int k = 0; k < win; ++k) segAutocorr[k] = wav.samples[s + k];
+
+            // F0 через автокорреляцию.
+            float corr = 0.0f;
+            fr.f0Hz = estimateF0Autocorr(segAutocorr, sr, fMin, fMax, corr);
+
+            // Спектр для harmonic и highFrac.
+            for (int k = 0; k < win; ++k) seg[k] = wav.samples[s + k];
+            applyHann(seg);
+            for (int k = 0; k < win; ++k)
+                buf[k] = std::complex<float>(seg[k], 0.0f);
+            fft(buf);
+            const int half = win / 2;
+            std::vector<float> mag(half);
+            for (int k = 0; k < half; ++k)
+                mag[k] = std::abs(buf[k]) / (win * 0.5f);
+
+            fr.harmonic = estimateHarmonicity(mag, gMax, sr, win, fMin, fMax);
+            fr.highFrac = computeHighFrac(mag, sr, win, fMax);
+            fr.type = classify(fr.levelDb, silenceThr, fr.f0Hz,
+                               fr.harmonic, fr.highFrac, fMax);
+        }
+
+        smoothFrames(frames);
+
+        // Медианный фильтр по F0 — глобально по всему массиву кадров.
+        medianFilterF0(frames);
+
+        // События.
+        std::vector<Event> events;
+        {
+            int i = 0;
+            while (i < int(frames.size()))
+            {
+                const char* t = frames[i].type;
+                int j = i + 1;
+                while (j < int(frames.size()) && frames[j].type == t) ++j;
+
+                Event e;
+                e.startMs = frames[i].tMs;
+                e.endMs = (j < int(frames.size())) ? frames[j].tMs : totalDurMs;
+                e.type = t;
+                e.f0Start = frames[i].f0Hz;
+                e.f0End = frames[j - 1].f0Hz;
+                float sumL = 0.0f;
+                for (int k = i; k < j; ++k) sumL += frames[k].levelDb;
+                e.levelDbMean = sumL / float(j - i);
+                e.frames.assign(frames.begin() + i, frames.begin() + j);
+                events.push_back(e);
+                i = j;
+            }
+        }
+
+        std::vector<Event> merged;
+        for (auto& e : events)
+        {
+            const double dur = e.endMs - e.startMs;
+            if (dur < MIN_EVENT_MS && !merged.empty())
+            {
+                merged.back().endMs = e.endMs;
+                merged.back().f0End = e.f0End;
+                for (const auto& fr : e.frames)
+                    merged.back().frames.push_back(fr);
+                continue;
+            }
+            merged.push_back(e);
+        }
+
+        std::vector<Event> finalEvents;
+        for (auto& e : merged)
+        {
+            const double dur = e.endMs - e.startMs;
+            if (e.type[0] == 'T' && dur > 400.0)
+            {
+                auto subs = splitTone(e);
+                for (auto& s : subs) finalEvents.push_back(s);
             }
             else
             {
-                // Пропускаем незнакомый чанк
-                f.seekg(chunkSize, std::ios::cur);
+                finalEvents.push_back(e);
             }
         }
 
-        if (!foundFmt) throw std::runtime_error("fmt chunk not found");
-        if (!foundData) throw std::runtime_error("data chunk not found");
+        os << "# СОБЫТИЯ\n";
+        os << "#   #  начало   конец   дл(ms)  тип     F0нач  F0кон  ампл  напр   характер\n";
 
-        // --- Проверка формата ---
-        bool isFloat = false;
-        if (audioFormat == 1) isFloat = false; // PCM
-        else if (audioFormat == 3) isFloat = true; // IEEE float
-        else throw std::runtime_error("unsupported audio format: " + std::to_string(audioFormat));
-
-        if (numChannels < 1)
-            throw std::runtime_error("invalid channel count: " + std::to_string(numChannels));
-
-        if (bitsPerSample != 8 && bitsPerSample != 16
-            && bitsPerSample != 24 && bitsPerSample != 32)
-            throw std::runtime_error("unsupported bits per sample: "
-                + std::to_string(bitsPerSample));
-
-        // --- Чтение данных ---
-        f.seekg(dataPos);
-
-        const int bytesPerSample = bitsPerSample / 8;
-        const int frameBytes = bytesPerSample * numChannels;
-        const uint32_t numFrames = dataSize / frameBytes;
-
-        std::vector<uint8_t> buffer(frameBytes);
-        std::vector<float> mono(numFrames);
-
-        for (uint32_t i = 0; i < numFrames; ++i)
+        int idx = 1;
+        for (const auto& e : finalEvents)
         {
-            f.read(reinterpret_cast<char*>(buffer.data()), frameBytes);
-            if (!f)
-            {
-                mono.resize(i);
-                break;
-            }
+            const double dur = e.endMs - e.startMs;
+            os << "  " << std::setw(4) << idx++ << "  "
+                << std::setw(7) << std::fixed << std::setprecision(0) << e.startMs << "  "
+                << std::setw(7) << e.endMs << "  "
+                << std::setw(6) << dur << "  "
+                << std::setw(7) << e.type << "  ";
+            if (e.type[0] == 'S' || e.f0Start <= 0.0f)
+                os << "    —  ";
+            else
+                os << std::setw(5) << e.f0Start << "  ";
+            if (e.type[0] == 'S' || e.f0End <= 0.0f)
+                os << "   —  ";
+            else
+                os << std::setw(5) << e.f0End << "  ";
+            os << std::setw(6) << std::setprecision(1) << e.levelDbMean;
 
-            float sum = 0.0f;
-            for (int ch = 0; ch < numChannels; ++ch)
+            if (e.type[0] == 'T')
             {
-                const uint8_t* ptr = buffer.data() + ch * bytesPerSample;
-                sum += normalizeSample(ptr, bitsPerSample, isFloat);
+                const char* dir = directionOf(e.f0Start, e.f0End);
+                const float jit = jitterOf(e.frames);
+                const char* ch = characterOf(jit);
+                os << "  " << std::setw(6) << dir
+                    << "  " << ch;
             }
-            mono[i] = sum / float(numChannels);
+            os << "\n";
         }
-
-        WavData result;
-        result.samples = std::move(mono);
-        result.sampleRate = int(sampleRate);
-        result.numChannels = int(numChannels);
-        result.bitsPerSample = int(bitsPerSample);
-        result.durationSec = double(result.samples.size()) / double(sampleRate);
-
-        return result;
     }
-} // namespace sd
+}
 
 
 
 
 
-// files\sound_digit\src\wav_loader.h
+// files\sound_digit\src\events.h
 #pragma once
-#include <cstdint>
-#include <string>
-#include <vector>
+#include "wav_loader.h"
+#include <ostream>
 
 namespace sd
 {
-    // ============================================================
-    //  Загрузка WAV-файла.
-    //
-    //  Поддерживаемые форматы:
-    //    - PCM 8/16/24/32 бит (integer)
-    //    - IEEE float 32 бит
-    //    - моно и стерео
-    //
-    //  Результат: моно-сигнал (float, [-1..1]) + метаданные.
-    //  Стерео микшируется в моно (усреднение каналов).
-    // ============================================================
+    // Построить список событий: разбор длинных TONE/NOISE на отдельные
+    // подсобытия, добавление характеристик (направление, характер,
+    // гармоники).
+    void writeEvents(std::ostream& os, const WavData& wav);
+}
 
-    struct WavData
+
+
+
+
+// files\sound_digit\src\fft.cpp
+#include "fft.h"
+#include <cmath>
+#include <stdexcept>
+
+namespace sd
+{
+    namespace
     {
-        std::vector<float> samples; // моно-сигнал
-        int sampleRate = 0; // Гц
-        int numChannels = 0; // исходное число каналов
-        int bitsPerSample = 0; // исходная битность
-        double durationSec = 0.0; // длительность
+        constexpr float PI_F = 3.14159265358979323846f;
+        constexpr float TWO_PI_F = 6.28318530717958647692f;
 
-        bool isValid() const { return !samples.empty() && sampleRate > 0; }
-    };
+        bool isPowerOfTwo(size_t n) { return n > 0 && (n & (n - 1)) == 0; }
 
-    // Загрузить WAV. Бросает std::runtime_error при ошибке.
-    WavData loadWav(const std::string& path);
-} // namespace sd
+        void bitReverse(std::vector<std::complex<float>>& a)
+        {
+            const size_t n = a.size();
+            for (size_t i = 1, j = 0; i < n; ++i)
+            {
+                size_t bit = n >> 1;
+                for (; j & bit; bit >>= 1) j ^= bit;
+                j ^= bit;
+                if (i < j) std::swap(a[i], a[j]);
+            }
+        }
+    }
+
+    void fft(std::vector<std::complex<float>>& data)
+    {
+        const size_t n = data.size();
+        if (n <= 1) return;
+        if (!isPowerOfTwo(n))
+            throw std::runtime_error("FFT size must be power of two");
+
+        bitReverse(data);
+
+        for (size_t len = 2; len <= n; len <<= 1)
+        {
+            const float ang = -TWO_PI_F / static_cast<float>(len);
+            const std::complex<float> wlen(std::cos(ang), std::sin(ang));
+            for (size_t i = 0; i < n; i += len)
+            {
+                std::complex<float> w(1.0f, 0.0f);
+                for (size_t j = 0; j < len / 2; ++j)
+                {
+                    const auto u = data[i + j];
+                    const auto v = data[i + j + len / 2] * w;
+                    data[i + j]              = u + v;
+                    data[i + j + len / 2]    = u - v;
+                    w *= wlen;
+                }
+            }
+        }
+    }
+
+    void applyHann(std::vector<float>& buf)
+    {
+        const size_t n = buf.size();
+        if (n <= 1) return;
+        const float denom = static_cast<float>(n - 1);
+        for (size_t i = 0; i < n; ++i)
+        {
+            const float w = 0.5f * (1.0f - std::cos(TWO_PI_F * float(i) / denom));
+            buf[i] *= w;
+        }
+    }
+}
+
+
+
+
+// files\sound_digit\src\fft.h
+#pragma once
+#include <vector>
+#include <complex>
+
+namespace sd
+{
+    void fft(std::vector<std::complex<float>>& data);
+    void applyHann(std::vector<float>& buf);
+}
+
+
+
+
+// files\sound_digit\src\main.cpp
+#include "wav_loader.h"
+#include "map.h"
+
+#include <windows.h>
+#include <commdlg.h>
+#include <events.h>
+#include <detail.h>
+
+#include <fstream>
+#include <string>
+
+#pragma comment(lib, "comdlg32.lib")
+
+namespace
+{
+    std::string selectWavFile()
+    {
+        char filename[MAX_PATH] = {0};
+        OPENFILENAMEA ofn = {};
+        ofn.lStructSize = sizeof(ofn);
+        ofn.lpstrFilter = "WAV files (*.wav)\0*.wav\0All files (*.*)\0*.*\0";
+        ofn.lpstrFile = filename;
+        ofn.nMaxFile = MAX_PATH;
+        ofn.lpstrTitle = "Выберите WAV-файл";
+        ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+        if (GetOpenFileNameA(&ofn)) return std::string(filename);
+        return "";
+    }
+
+    std::string baseName(const std::string& path)
+    {
+        auto pos = path.find_last_of("/\\");
+        return (pos == std::string::npos) ? path : path.substr(pos + 1);
+    }
+
+    std::string dirName(const std::string& path)
+    {
+        auto pos = path.find_last_of("/\\");
+        return (pos == std::string::npos) ? "" : path.substr(0, pos);
+    }
+
+    std::string stemName(const std::string& path)
+    {
+        std::string n = baseName(path);
+        auto pos = n.find_last_of('.');
+        return (pos == std::string::npos) ? n : n.substr(0, pos);
+    }
+}
+
+int main()
+{
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+
+    const std::string path = selectWavFile();
+    if (path.empty()) return 0;
+
+    sd::WavData wav;
+    try
+    {
+        wav = sd::loadWav(path);
+    }
+    catch (const std::exception& e)
+    {
+        std::string msg = "Ошибка загрузки:\n";
+        msg += e.what();
+        MessageBoxA(nullptr, msg.c_str(), "sound_digit", MB_OK | MB_ICONERROR);
+        return 2;
+    }
+
+    const std::string outPath = dirName(path) + "\\" + stemName(path) + ".hear.txt";
+
+    std::ofstream f(outPath);
+    if (!f)
+    {
+        MessageBoxA(nullptr, "Не удалось записать отчёт.", "sound_digit",
+                    MB_OK | MB_ICONERROR);
+        return 3;
+    }
+
+    sd::writeMap(f, wav);
+    f.close();
+
+    // Второй файл — события.
+    const std::string evPath = dirName(path) + "\\" + stemName(path) + ".events.txt";
+    std::ofstream fe(evPath);
+    if (fe)
+    {
+        sd::writeEvents(fe, wav);
+        fe.close();
+    }
+
+    // Третий файл — детали.
+    const std::string dtPath = dirName(path) + "\\" + stemName(path) + ".detail.txt";
+    std::ofstream fd(dtPath);
+    if (fd)
+    {
+        sd::writeDetails(fd, wav);
+        fd.close();
+
+        // Четвёртый файл — импульсы.
+        const std::string impPath = dirName(path) + "\\" + stemName(path) + ".impulses.txt";
+        std::ofstream fi(impPath);
+        if (fi)
+        {
+            sd::writeImpulses(fi, wav);
+            fi.close();
+        }
+
+        // Пятый файл — полосы.
+        const std::string bandPath = dirName(path) + "\\" + stemName(path) + ".bands.txt";
+        std::ofstream fb(bandPath);
+        if (fb)
+        {
+            sd::writeBands(fb, wav);
+            fb.close();
+        }
+    }
+
+    ShellExecuteA(nullptr, "open", "notepad.exe",
+                  ("\"" + outPath + "\"").c_str(),
+                  nullptr, SW_SHOWNORMAL);
+
+    ShellExecuteA(nullptr, "open", "notepad.exe",
+                  ("\"" + evPath + "\"").c_str(),
+                  nullptr, SW_SHOWNORMAL);
+
+    ShellExecuteA(nullptr, "open", "notepad.exe",
+                  ("\"" + dtPath + "\"").c_str(),
+                  nullptr, SW_SHOWNORMAL);
+
+    return 0;
+}
 
 
 
 
 
+// files\sound_digit\src\map.cpp
+#include "map.h"
+#include "fft.h"
+
+#include <cmath>
+#include <iomanip>
+#include <vector>
+#include <algorithm>
+#include <complex>
+
+namespace sd
+{
+    namespace
+    {
+        constexpr float PI_F = 3.14159265358979323846f;
+
+        // ============================================================
+        //  КАРТА — параметры (v5.3, универсальные)
+        // ============================================================
+
+        constexpr int FRAME_HOP_MS = 25;
+        constexpr int FFT_WIN = 1024;
+
+        // Зона поиска F0 — общая для всех сигналов.
+        constexpr float F0_MIN_HZ = 100.0f;
+        constexpr float F0_MAX_HZ = 8000.0f;
+
+        // Гармоничность: порог «это тон».
+        constexpr float HARMONIC_THR_TONE = 0.30f;
+
+        // Минимальная длительность события (мс).
+        constexpr double MIN_EVENT_MS = 100.0;
+
+        // Адаптивный порог тишины: медиана фона + отступ.
+        constexpr float SILENCE_OFFSET_DB = 12.0f;
+
+        // ============================================================
+
+        struct Frame
+        {
+            double tMs;
+            float levelDb; // нормированный на медиану фона
+            float f0Hz;
+            float harmonic;
+            float highFrac; // доля энергии выше F0_MAX/2
+            const char* type;
+        };
+
+        std::vector<std::pair<int, float>>
+        findPeaks(const std::vector<float>& mag, float maxMag, float floorDb)
+        {
+            std::vector<std::pair<int, float>> peaks;
+            const int half = int(mag.size());
+            for (int k = 2; k < half - 1; ++k)
+            {
+                if (mag[k] > mag[k - 1] && mag[k] > mag[k + 1])
+                {
+                    const float db = 20.0f * std::log10(mag[k] / maxMag + 1e-9f);
+                    if (db < floorDb) continue;
+                    peaks.push_back({k, mag[k]});
+                }
+            }
+            return peaks;
+        }
+
+        float estimateHarmonicity(const std::vector<float>& mag,
+                                  float maxMag, int sr, int fftSize,
+                                  float fMin, float fMax)
+        {
+            auto peaks = findPeaks(mag, maxMag, -40.0f);
+            if (peaks.size() < 2) return 0.0f;
+
+            const float binHz = float(sr) / float(fftSize);
+            int totalChecked = 0, harmonicCount = 0;
+
+            for (const auto& p : peaks)
+            {
+                const float f1 = float(p.first) * binHz;
