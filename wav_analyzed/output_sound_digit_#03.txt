@@ -1,0 +1,229 @@
+        // ------------------------------------------------------------
+        uint32_t readU32(std::ifstream& f)
+        {
+            uint8_t b[4];
+            f.read(reinterpret_cast<char*>(b), 4);
+            return uint32_t(b[0]) | (uint32_t(b[1]) << 8)
+                | (uint32_t(b[2]) << 16) | (uint32_t(b[3]) << 24);
+        }
+
+        uint16_t readU16(std::ifstream& f)
+        {
+            uint8_t b[2];
+            f.read(reinterpret_cast<char*>(b), 2);
+            return uint16_t(b[0]) | (uint16_t(b[1]) << 8);
+        }
+
+        // ------------------------------------------------------------
+        //  Нормализация сэмпла в float [-1..1] в зависимости от битности.
+        // ------------------------------------------------------------
+        float normalizeSample(const uint8_t* buf, int bitsPerSample, bool isFloat)
+        {
+            if (isFloat && bitsPerSample == 32)
+            {
+                float v;
+                std::memcpy(&v, buf, 4);
+                return v;
+            }
+
+            if (bitsPerSample == 8)
+            {
+                // 8-битный WAV — unsigned, центр 128
+                int v = int(buf[0]) - 128;
+                return float(v) / 128.0f;
+            }
+            if (bitsPerSample == 16)
+            {
+                int16_t v;
+                std::memcpy(&v, buf, 2);
+                return float(v) / 32768.0f;
+            }
+            if (bitsPerSample == 24)
+            {
+                // 24 бита little-endian signed
+                int32_t v = int32_t(buf[0]) | (int32_t(buf[1]) << 8) | (int32_t(buf[2]) << 16);
+                if (v & 0x800000) v |= ~0xFFFFFF; // знаковое расширение
+                return float(v) / 8388608.0f;
+            }
+            if (bitsPerSample == 32)
+            {
+                int32_t v;
+                std::memcpy(&v, buf, 4);
+                return float(v) / 2147483648.0f;
+            }
+
+            throw std::runtime_error("unsupported bits per sample");
+        }
+    } // namespace
+
+    // ------------------------------------------------------------
+    //  Основная функция загрузки.
+    // ------------------------------------------------------------
+    WavData loadWav(const std::string& path)
+    {
+        std::ifstream f(path, std::ios::binary);
+        if (!f) throw std::runtime_error("cannot open file: " + path);
+
+        // --- RIFF header ---
+        char riff[4];
+        f.read(riff, 4);
+        if (std::strncmp(riff, "RIFF", 4) != 0)
+            throw std::runtime_error("not a RIFF file");
+
+        readU32(f); // riff size, не нужен
+
+        char wave[4];
+        f.read(wave, 4);
+        if (std::strncmp(wave, "WAVE", 4) != 0)
+            throw std::runtime_error("not a WAVE file");
+
+        // --- Ищем fmt и data чанки ---
+        uint16_t audioFormat = 0;
+        uint16_t numChannels = 0;
+        uint32_t sampleRate = 0;
+        uint16_t bitsPerSample = 0;
+        bool foundFmt = false;
+        bool foundData = false;
+        std::streampos dataPos;
+        uint32_t dataSize = 0;
+
+        while (f && !(foundFmt && foundData))
+        {
+            char chunkId[4];
+            f.read(chunkId, 4);
+            if (!f) break;
+
+            uint32_t chunkSize = readU32(f);
+
+            if (std::strncmp(chunkId, "fmt ", 4) == 0)
+            {
+                audioFormat = readU16(f);
+                numChannels = readU16(f);
+                sampleRate = readU32(f);
+                readU32(f); // byte rate
+                readU16(f); // block align
+                bitsPerSample = readU16(f);
+
+                // Пропускаем остаток чанка (если есть)
+                if (chunkSize > 16)
+                {
+                    f.seekg(chunkSize - 16, std::ios::cur);
+                }
+                foundFmt = true;
+            }
+            else if (std::strncmp(chunkId, "data", 4) == 0)
+            {
+                dataPos = f.tellg();
+                dataSize = chunkSize;
+                foundData = true;
+                // Не читаем сейчас — вернёмся после fmt.
+                // Если fmt уже был — выходим.
+                if (foundFmt) break;
+                f.seekg(chunkSize, std::ios::cur);
+            }
+            else
+            {
+                // Пропускаем незнакомый чанк
+                f.seekg(chunkSize, std::ios::cur);
+            }
+        }
+
+        if (!foundFmt) throw std::runtime_error("fmt chunk not found");
+        if (!foundData) throw std::runtime_error("data chunk not found");
+
+        // --- Проверка формата ---
+        bool isFloat = false;
+        if (audioFormat == 1) isFloat = false; // PCM
+        else if (audioFormat == 3) isFloat = true; // IEEE float
+        else throw std::runtime_error("unsupported audio format: " + std::to_string(audioFormat));
+
+        if (numChannels < 1)
+            throw std::runtime_error("invalid channel count: " + std::to_string(numChannels));
+
+        if (bitsPerSample != 8 && bitsPerSample != 16
+            && bitsPerSample != 24 && bitsPerSample != 32)
+            throw std::runtime_error("unsupported bits per sample: "
+                + std::to_string(bitsPerSample));
+
+        // --- Чтение данных ---
+        f.seekg(dataPos);
+
+        const int bytesPerSample = bitsPerSample / 8;
+        const int frameBytes = bytesPerSample * numChannels;
+        const uint32_t numFrames = dataSize / frameBytes;
+
+        std::vector<uint8_t> buffer(frameBytes);
+        std::vector<float> mono(numFrames);
+
+        for (uint32_t i = 0; i < numFrames; ++i)
+        {
+            f.read(reinterpret_cast<char*>(buffer.data()), frameBytes);
+            if (!f)
+            {
+                mono.resize(i);
+                break;
+            }
+
+            float sum = 0.0f;
+            for (int ch = 0; ch < numChannels; ++ch)
+            {
+                const uint8_t* ptr = buffer.data() + ch * bytesPerSample;
+                sum += normalizeSample(ptr, bitsPerSample, isFloat);
+            }
+            mono[i] = sum / float(numChannels);
+        }
+
+        WavData result;
+        result.samples = std::move(mono);
+        result.sampleRate = int(sampleRate);
+        result.numChannels = int(numChannels);
+        result.bitsPerSample = int(bitsPerSample);
+        result.durationSec = double(result.samples.size()) / double(sampleRate);
+
+        return result;
+    }
+} // namespace sd
+
+
+
+
+
+// files\sound_digit\src\wav_loader.h
+#pragma once
+#include <cstdint>
+#include <string>
+#include <vector>
+
+namespace sd
+{
+    // ============================================================
+    //  Загрузка WAV-файла.
+    //
+    //  Поддерживаемые форматы:
+    //    - PCM 8/16/24/32 бит (integer)
+    //    - IEEE float 32 бит
+    //    - моно и стерео
+    //
+    //  Результат: моно-сигнал (float, [-1..1]) + метаданные.
+    //  Стерео микшируется в моно (усреднение каналов).
+    // ============================================================
+
+    struct WavData
+    {
+        std::vector<float> samples; // моно-сигнал
+        int sampleRate = 0; // Гц
+        int numChannels = 0; // исходное число каналов
+        int bitsPerSample = 0; // исходная битность
+        double durationSec = 0.0; // длительность
+
+        bool isValid() const { return !samples.empty() && sampleRate > 0; }
+    };
+
+    // Загрузить WAV. Бросает std::runtime_error при ошибке.
+    WavData loadWav(const std::string& path);
+} // namespace sd
+
+
+
+
+
