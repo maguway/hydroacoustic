@@ -590,6 +590,15 @@ static void generateDataset(const UcaGeometry& uca, float fs)
         }
     }
 
+    // --- НОВОЕ: Запрос на добавление океана к чистым классам ---
+    std::cout << "Добавлять звук океана к чистым классам (Винт, Двиг, Дельфин)? [y/n, Enter = n]: ";
+    {
+        std::string line;
+        std::getline(std::cin, line);
+        char c = line.empty() ? 'n' : std::tolower(line[0]);
+        dp.mixWithOcean = (c == 'y');
+    }
+
     int n = 0;
     std::cout << "Сколько файлов на класс? [Enter = 10]: ";
     std::string line;

@@ -169,7 +169,8 @@ namespace hydro
             sp.receiverSnrDb = p_.receiverSnrDb;
             sp.noiseSeed = static_cast<uint32_t>(rng());
 
-            // Шум океана — включён для класса OceanNoise и для наложения на другие.
+            // Шум океана — включён для класса OceanNoise, и для чистых
+            // классов, только если пользователь выбрал mixWithOcean.
             fillOceanDefaults(sp.oceanParams);
             if (useOceanNoise)
             {
@@ -178,7 +179,7 @@ namespace hydro
             }
             else
             {
-                sp.oceanEnabled = true; // лёгкий фон для реализма
+                sp.oceanEnabled = p_.mixWithOcean; // <--- УПРАВЛЯЕТСЯ НАСТРОЙКОЙ
                 sp.oceanParams.level = oceanLevelDist(rng);
             }
             sp.oceanParams.seed = static_cast<uint32_t>(rng());
