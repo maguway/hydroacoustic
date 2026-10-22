@@ -682,4 +682,31 @@ namespace hydro
         // по кускам — sampleOffset нужно будет учесть.
         (void)sampleOffset;
     }
+
+
+    // ============================================================
+    //  Реализация DolphinWhistleSource
+    // ============================================================
+    DolphinWhistleSource::DolphinWhistleSource(const DolphinWhistleTestParams& p)
+        : p_(p), engine_(p)
+    {
+    }
+
+    void DolphinWhistleSource::setParams(const DolphinWhistleTestParams& p)
+    {
+        p_ = p;
+        engine_.setParams(p);
+    }
+
+    void DolphinWhistleSource::reset()
+    {
+        engine_.setParams(p_); // сбрасывает seed и состояние внутри движка
+    }
+
+    void DolphinWhistleSource::generate(float* out, int numSamples, float fs, int64_t sampleOffset)
+    {
+        (void)fs; // DolphinWhistleTest берет fs из своих параметров
+        (void)sampleOffset; // Генерируем целиком, как и старая модель
+        engine_.generate(out, numSamples);
+    }
 } // namespace hydro

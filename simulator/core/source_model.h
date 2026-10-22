@@ -1,6 +1,7 @@
 #pragma once
 #include "types.h"
 #include "math_constants.h"
+#include "dolphin_whistle_test.h"
 #include <cstdint>
 #include <random>
 #include <string>
@@ -241,5 +242,28 @@ namespace hydro
                          const Click& c);
         void renderBurst(std::vector<float>& buffer, int numSamples, float fs,
                          const Burst& b);
+    };
+
+
+    // ============================================================
+    //  Адаптер: превращает DolphinWhistleTest в SourceModel.
+    //  Нужен, чтобы генератор датасета (Scene) мог использовать
+    //  новую модель свиста, не меняя архитектуру.
+    // ============================================================
+    class DolphinWhistleSource : public SourceModel
+    {
+    public:
+        explicit DolphinWhistleSource(const DolphinWhistleTestParams& p = {});
+
+        void generate(float* out, int numSamples, float fs, int64_t sampleOffset) override;
+        std::string name() const override { return "DolphinWhistleSource"; }
+        void reset() override;
+
+        const DolphinWhistleTestParams& params() const { return p_; }
+        void setParams(const DolphinWhistleTestParams& p);
+
+    private:
+        DolphinWhistleTestParams p_;
+        DolphinWhistleTest engine_;
     };
 } // namespace hydro

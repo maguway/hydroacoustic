@@ -38,6 +38,9 @@ namespace hydro
         bool uniformAzimuth = true; // true = равномерно 0..359
         // false = фиксированный azimuthDeg
         float azimuthDeg = 45.0f; // используется если uniformAzimuth = false
+
+        // --- НОВОЕ ---
+        bool mixWithOcean = true; // Добавлять ли звук океана к чистым классам
     };
 
     // Что генерировать. Минимум один класс должен быть включён.

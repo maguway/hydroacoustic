@@ -350,28 +350,28 @@ namespace hydro
                 "Dolphin",
                 [&](std::mt19937& r) -> std::unique_ptr<SourceModel>
                 {
-                    DolphinParams dp;
-                    dp.numWhistlesPerSec = dolphWhistlesDist(r);
-                    dp.whistleDurationMin = DOLPHIN_WHISTLE_DUR_MIN;
-                    dp.whistleDurationMax = DOLPHIN_WHISTLE_DUR_MAX;
-                    dp.whistleFreqMin = dolphFreqMinDist(r);
-                    dp.whistleFreqMax = dolphFreqMaxDist(r);
-                    dp.whistleSweepDepth = DOLPHIN_WHISTLE_SWEEP;
-                    dp.numHarmonics = DOLPHIN_NUM_HARMONICS;
-                    dp.clickRate = dolphClickRateDist(r);
-                    dp.clickDurationUs = DOLPHIN_CLICK_DUR_US;
-                    dp.clickFreqMin = DOLPHIN_CLICK_FREQ_MIN;
-                    dp.clickFreqMax = DOLPHIN_CLICK_FREQ_MAX;
-                    dp.clicksPerTrain = DOLPHIN_CLICKS_PER_TRAIN;
-                    dp.burstRate = dolphBurstRateDist(r);
-                    dp.burstDurationMin = DOLPHIN_BURST_DUR_MIN;
-                    dp.burstDurationMax = DOLPHIN_BURST_DUR_MAX;
-                    dp.burstClickIntervalUs = DOLPHIN_BURST_CLICK_US;
-                    dp.burstFreqMin = DOLPHIN_BURST_FREQ_MIN;
-                    dp.burstFreqMax = DOLPHIN_BURST_FREQ_MAX;
-                    dp.snrDb = dolphSnrDist(r);
+                    DolphinWhistleTestParams dp;
+
+                    // Рандомизация в разумных пределах (как вы просили)
+                    dp.fStartMin = dolphFreqMinDist(r); // нижняя частота
+                    dp.fStartMax = dp.fStartMin + 1000.0f;
+                    dp.fEndMin = dolphFreqMaxDist(r) * 0.4f; // куда свистит
+                    dp.fEndMax = dp.fEndMin + 500.0f;
+
+                    // Случайное число фраз (3-5 штук на 5 секунд)
+                    dp.phraseCount = 3 + (r() % 3);
+
+                    // Ограничитель сверху (из наших вчерашних правок)
+                    dp.fMaxLimit = 6000.0f;
+
+                    // Приглушенные гармоники (из наших вчерашних правок)
+                    dp.harm1Db = -20.0f;
+                    dp.harm2Db = -30.0f;
+                    dp.harm3Db = -40.0f;
+
                     dp.seed = static_cast<uint32_t>(r());
-                    return std::make_unique<Dolphin>(dp);
+
+                    return std::make_unique<DolphinWhistleSource>(dp);
                 },
                 [](const SourceModel* src) -> std::string
                 {
