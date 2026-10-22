@@ -238,6 +238,14 @@ static void runCustomScene(const UcaGeometry& uca, float fs)
         std::cout << "!!! Нужна хотя бы одна компонента. Повторите.\n\n";
     }
 
+    // --- Добавлять ли океан к чистым классам (как в датасете) ---
+    bool mixOcean = false;
+    {
+        int r = askYesNo("Добавлять звук океана к чистым классам?");
+        if (r < 0) return;
+        mixOcean = (r == 1);
+    }
+
     float azimuth = SCENE_AZIMUTH_DEG;
     if (useProp || useEng || useDolphin)
     {
@@ -463,6 +471,29 @@ static void runCustomScene(const UcaGeometry& uca, float fs)
         printSpectrumAscii(spec, fs, FFT_N, 15);
     }
 
+    // --- 5 профилей подлодок (10 сек каждый) ---
+    std::cout << "\n=== Профили подлодок (10 сек) ===\n";
+    {
+        // Базовые параметры сцены — те же, что у остальных файлов.
+        SceneParams baseSp2;
+        baseSp2.azimuthDeg = azimuth;
+        baseSp2.soundSpeed = SOUND_SPEED_WATER;
+        baseSp2.receiverSnrDb = recvSnr;
+        baseSp2.noiseSeed = 42;
+        baseSp2.oceanEnabled = false;
+
+        DatasetParams dp;
+        dp.sampleRate = fs;
+        dp.outputDir = "."; // пишем в текущую папку
+        dp.masterSeed = 20260924;
+        dp.receiverSnrDb = recvSnr;
+
+        DatasetSelection sel; // не используется в этом методе
+        DatasetGenerator gen(uca, dp, sel);
+        const int n = gen.generateSingleProfiles(baseSp2, 10, mixOcean);
+        std::cout << "  Created: " << n << " file(s).\n";
+    }
+
     std::cout << "\n";
 }
 
@@ -505,10 +536,10 @@ static void generateWhistleTest(float fs)
     // --- 8-канальная раскладка ---
     UcaGeometry uca(NUM_CHANNELS, UCA_RADIUS_M);
     Propagation::Params pp;
-    pp.azimuthDeg    = SCENE_AZIMUTH_DEG;   // 45° из params.h
-    pp.soundSpeed    = SOUND_SPEED_WATER;
+    pp.azimuthDeg = SCENE_AZIMUTH_DEG; // 45° из params.h
+    pp.soundSpeed = SOUND_SPEED_WATER;
     pp.receiverSnrDb = SCENE_RECEIVER_SNR_DB;
-    pp.noiseSeed     = 42;
+    pp.noiseSeed = 42;
 
     Propagation prop(pp);
     std::array<std::vector<float>, NUM_CHANNELS> ch8;

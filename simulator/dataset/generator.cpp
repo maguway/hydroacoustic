@@ -770,4 +770,100 @@ namespace hydro
 
         return created;
     }
+
+
+    // ============================================================
+    //  Одиночная генерация 5 профилей подлодок.
+    //
+    //  Использует g_vesselProfiles (те же 5 сигнатур, что в пакетном
+    //  режиме) и SubmarineProfileSource (адаптер винт+двигатель).
+    //
+    //  Небольшой джиттер вокруг профиля — как в generate():
+    //    RPM винта:    ×[0.95, 1.05]
+    //    RPM двигателя:×[0.95, 1.05]
+    //    кавитация:    ×[0.9, 1.1]
+    //  Остальные поля — ровно из профиля.
+    // ============================================================
+    int DatasetGenerator::generateSingleProfiles(const SceneParams& base,
+                                                 int durationSec,
+                                                 bool mixOcean)
+    {
+        if (durationSec <= 0) durationSec = 10;
+
+        const int totalSamples =
+            static_cast<int>(p_.sampleRate) * durationSec;
+
+        std::mt19937 rng(p_.masterSeed);
+
+        std::uniform_real_distribution<float> propRpmJitter(0.95f, 1.05f);
+        std::uniform_real_distribution<float> engRpmJitter(0.95f, 1.05f);
+        std::uniform_real_distribution<float> cavJitter(0.9f, 1.1f);
+        std::uniform_real_distribution<float> oceanLevelDist(
+            ds::OCEAN_LEVEL_MIN, ds::OCEAN_LEVEL_MAX);
+
+        int created = 0;
+
+        for (const auto& profile : g_vesselProfiles)
+        {
+            // --- Параметры сцены (общие для всех профилей) ---
+            SceneParams sp = base;
+            sp.soundSpeed = SOUND_SPEED_WATER;
+            sp.noiseSeed = static_cast<uint32_t>(rng());
+
+            fillOceanDefaults(sp.oceanParams);
+            sp.oceanEnabled = mixOcean;
+            if (mixOcean)
+            {
+                sp.oceanParams.level = oceanLevelDist(rng);
+            }
+            sp.oceanParams.seed = static_cast<uint32_t>(rng());
+
+            // --- Параметры винта из профиля + джиттер ---
+            PropellerParams pp;
+            pp.numBlades = profile.numBlades;
+            pp.rpm = profile.rpmProp * propRpmJitter(rng);
+            pp.cavitation = profile.cavitation * cavJitter(rng);
+            pp.depthM = PROP_DEPTH_M;
+            pp.numHarmonics = PROP_NUM_HARMONICS;
+            pp.modulationDepth = PROP_MODULATION_DEPTH;
+            pp.modulationHz = PROP_MODULATION_HZ;
+            pp.snrDb = profile.snrDb;
+            pp.seed = static_cast<uint32_t>(rng());
+
+            // --- Параметры двигателя из профиля + джиттер ---
+            EngineParams ep;
+            ep.rpm = profile.rpmEngine * engRpmJitter(rng);
+            ep.numHarmonics = ENG_NUM_HARMONICS;
+            ep.numResonances = profile.numResonances;
+            ep.mechNoiseLevel = profile.mechNoiseLevel;
+            ep.snrDb = profile.snrDb;
+            ep.seed = static_cast<uint32_t>(rng());
+
+            Scene scene;
+            scene.setParams(sp);
+            scene.addSource(
+                std::make_unique<SubmarineProfileSource>(pp, ep));
+
+            std::array<std::vector<float>, NUM_CHANNELS> ch8;
+            scene.generate(ch8, totalSamples, p_.sampleRate, uca_);
+
+            const std::string wavName =
+                "scene_" + profile.name + ".wav";
+            if (!writeWavFloat32(wavName, ch8,
+                                 static_cast<int>(p_.sampleRate)))
+            {
+                std::cerr << "  [FAIL] " << wavName << "\n";
+                continue;
+            }
+
+            std::cout << "  " << wavName
+                << "  (" << durationSec << " s, az="
+                << std::fixed << std::setprecision(1)
+                << sp.azimuthDeg << "\u00b0)\n";
+
+            ++created;
+        }
+
+        return created;
+    }
 } // namespace hydro

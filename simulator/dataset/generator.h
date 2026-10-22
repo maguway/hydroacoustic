@@ -84,6 +84,21 @@ namespace hydro
         // Возвращает число успешно созданных WAV-файлов.
         int generate();
 
+        // ============================================================
+        //  Одиночная генерация 5 профилей подлодок (фиксированные
+        //  сигнатуры из g_vesselProfiles) в текущую директорию.
+        //
+        //  Отличие от generate(): пишет НЕ папки, а 5 файлов
+        //    scene_<profile.name>.wav
+        //  длительностью durationSec секунд каждый.
+        //
+        //  Параметры сцены (азимут, SNR) — общие, из base.
+        //  mixOcean — подмешивать ли океан к каждому профилю.
+        //
+        //  Возвращает число успешно созданных WAV.
+        // ============================================================
+        int generateSingleProfiles(const SceneParams& base, int durationSec, bool mixOcean);
+
     private:
         const UcaGeometry& uca_;
         DatasetParams p_;
