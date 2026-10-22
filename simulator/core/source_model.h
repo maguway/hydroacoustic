@@ -266,4 +266,37 @@ namespace hydro
         DolphinWhistleTestParams p_;
         DolphinWhistleTest engine_;
     };
+
+    // ============================================================
+    //  Адаптер: объединяет винт и двигатель в единый источник
+    //  с заданным профилем (сигнатурой).
+    // ============================================================
+    class SubmarineProfileSource : public SourceModel
+    {
+    public:
+        SubmarineProfileSource(const PropellerParams& prop, const EngineParams& eng)
+            : prop_(prop), eng_(eng)
+        {
+        }
+
+        void generate(float* out, int numSamples, float fs, int64_t sampleOffset) override
+        {
+            std::vector<float> tmp(numSamples, 0.0f);
+            prop_.generate(out, numSamples, fs, sampleOffset);
+            eng_.generate(tmp.data(), numSamples, fs, sampleOffset);
+            for (int i = 0; i < numSamples; ++i) out[i] += tmp[i];
+        }
+
+        std::string name() const override { return "SubmarineProfile"; }
+
+        void reset() override
+        {
+            prop_.reset();
+            eng_.reset();
+        }
+
+    private:
+        PropellerSubmarine prop_;
+        EngineSubmarine eng_;
+    };
 } // namespace hydro

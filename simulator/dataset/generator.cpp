@@ -53,6 +53,25 @@ namespace hydro
         op.modulationHz = OCEAN_MODULATION_HZ;
     }
 
+    // ============================================================
+    //  Конкретные акустические сигнатуры (5 аппаратов).
+    // ============================================================
+    static const std::vector<VesselProfile> g_vesselProfiles = {
+        // 1. Тяжёлая ПЛ: большой винт, низкие обороты, сильная кавитация.
+        {"Sub_Heavy", 7, 150.0f, 0.45f, 300.0f, 3, 0.25f, 25.0f},
+
+        // 2. Быстрая ПЛ: малый винт, высокие обороты, слабая кавитация.
+        {"Sub_Fast", 5, 500.0f, 0.15f, 600.0f, 2, 0.15f, 35.0f},
+
+        // 3. Тихая ПЛ: баланс, минимальный шум.
+        {"Sub_Stealth", 9, 250.0f, 0.10f, 350.0f, 1, 0.05f, 45.0f},
+
+        // 4. Старая (изношенная) ПЛ: много резонансов, дребезжание.
+        {"Sub_Rusty", 6, 200.0f, 0.35f, 250.0f, 3, 0.40f, 20.0f},
+
+        // 5. Средняя ПЛ: золотая середина.
+        {"Sub_Medium", 7, 350.0f, 0.25f, 450.0f, 2, 0.20f, 30.0f}
+    };
 
     template <typename Channels>
     static bool writeWavFloat32(const std::string& path,
@@ -267,6 +286,53 @@ namespace hydro
                                                            ds::DOLPHIN_SNR_DB_MAX);
 
         int totalCreated = 0;
+
+        // ---- Профили подводных аппаратов (Винт + Двигатель) ----
+        for (const auto& profile : g_vesselProfiles)
+        {
+            // Небольшой разброс вокруг базовых параметров профиля
+            std::uniform_real_distribution<float> propRpmJitter(0.95f, 1.05f);
+            std::uniform_real_distribution<float> engRpmJitter(0.95f, 1.05f);
+            std::uniform_real_distribution<float> cavJitter(0.9f, 1.1f);
+
+            totalCreated += generateClass(
+                profile.name,
+                [&](std::mt19937& r) -> std::unique_ptr<SourceModel>
+                {
+                    PropellerParams pp;
+                    pp.numBlades = profile.numBlades;
+                    pp.rpm = profile.rpmProp * propRpmJitter(r);
+                    pp.cavitation = profile.cavitation * cavJitter(r);
+                    pp.depthM = PROP_DEPTH_M;
+                    pp.numHarmonics = PROP_NUM_HARMONICS;
+                    pp.modulationDepth = PROP_MODULATION_DEPTH;
+                    pp.modulationHz = PROP_MODULATION_HZ;
+                    pp.snrDb = profile.snrDb;
+                    pp.seed = static_cast<uint32_t>(r());
+
+                    EngineParams ep;
+                    ep.rpm = profile.rpmEngine * engRpmJitter(r);
+                    ep.numHarmonics = ENG_NUM_HARMONICS;
+                    ep.numResonances = profile.numResonances;
+                    ep.mechNoiseLevel = profile.mechNoiseLevel;
+                    ep.snrDb = profile.snrDb;
+                    ep.seed = static_cast<uint32_t>(r());
+
+                    return std::make_unique<SubmarineProfileSource>(pp, ep);
+                },
+                [profile](const SourceModel* src) -> std::string
+                {
+                    std::ostringstream os;
+                    os << "{\n";
+                    os << "    \"vessel_class\": \"" << profile.name << "\",\n";
+                    os << "    \"num_blades\": " << profile.numBlades << ",\n";
+                    os << "    \"rpm_prop\": " << profile.rpmProp << ",\n";
+                    os << "    \"rpm_engine\": " << profile.rpmEngine << "\n";
+                    os << "  }";
+                    return os.str();
+                },
+                rng, false);
+        }
 
         // ---- PropellerSub ----
         if (sel_.propeller)
@@ -532,8 +598,11 @@ namespace hydro
             }
         };
 
-        if (sel_.propeller) scanClass("PropellerSub", false);
-        if (sel_.engine) scanClass("EngineSub", false);
+        // Сканируем все 5 профилей
+        for (const auto& profile : g_vesselProfiles)
+        {
+            scanClass(profile.name, false);
+        }
         if (sel_.dolphin) scanClass("Dolphin", false);
         if (sel_.ocean) scanClass("OceanNoise", true);
 
