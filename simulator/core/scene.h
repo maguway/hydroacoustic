@@ -12,7 +12,6 @@ namespace hydro
 {
     struct SceneParams
     {
-        float azimuthDeg = 0.0f;
         float distanceM = 100.0f;
         float soundSpeed = SOUND_SPEED_WATER;
         float receiverSnrDb = 30.0f;

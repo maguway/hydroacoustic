@@ -274,7 +274,6 @@ static void runCustomScene(const UcaGeometry& uca, float fs)
     const int totalSamples = static_cast<int>(fs) * SCENE_DURATION_SEC;
 
     SceneParams baseSp;
-    baseSp.azimuthDeg = azimuth;
     baseSp.soundSpeed = SOUND_SPEED_WATER;
     baseSp.receiverSnrDb = recvSnr;
     baseSp.noiseSeed = 42;
@@ -376,7 +375,11 @@ static void runCustomScene(const UcaGeometry& uca, float fs)
         SceneParams sp = baseSp;
         Scene scene;
         scene.setParams(sp);
-        scene.addSource(makeProp());
+        {
+            auto src = makeProp();
+            src->setAzimuthDeg(azimuth);
+            scene.addSource(std::move(src));
+        }
 
         std::array<std::vector<float>, NUM_CHANNELS> ch8;
         scene.generate(ch8, totalSamples, fs, uca);
@@ -451,9 +454,24 @@ static void runCustomScene(const UcaGeometry& uca, float fs)
 
         Scene scene;
         scene.setParams(sp);
-        if (useProp) scene.addSource(makeProp());
-        if (useEng) scene.addSource(makeEng());
-        if (useDolphin) scene.addSource(makeDolphin());
+        if (useProp)
+        {
+            auto src = makeProp();
+            src->setAzimuthDeg(azimuth);
+            scene.addSource(std::move(src));
+        }
+        if (useEng)
+        {
+            auto src = makeEng();
+            src->setAzimuthDeg(azimuth);
+            scene.addSource(std::move(src));
+        }
+        if (useDolphin)
+        {
+            auto src = makeDolphin();
+            src->setAzimuthDeg(azimuth);
+            scene.addSource(std::move(src));
+        }
 
         std::array<std::vector<float>, NUM_CHANNELS> ch8;
         scene.generate(ch8, totalSamples, fs, uca);
