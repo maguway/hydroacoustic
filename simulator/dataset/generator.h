@@ -97,7 +97,7 @@ namespace hydro
         //
         //  Возвращает число успешно созданных WAV.
         // ============================================================
-        int generateSingleProfiles(const SceneParams& base, int durationSec, bool mixOcean);
+        int generateSingleProfiles(const SceneParams& base, int durationSec, float azimuthDeg, bool mixOcean);
 
     private:
         const UcaGeometry& uca_;

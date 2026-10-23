@@ -171,19 +171,17 @@ namespace hydro
                 srcPtr = source.get(); // сохраняем ДО передачи в Scene
             }
 
+            // Азимут источника: -1 для океана, иначе — расчёт по индексу.
+            float srcAz = AZIMUTH_OMNI;
+            if (!useOceanNoise)
+            {
+                if (p_.uniformAzimuth)
+                    srcAz = (static_cast<float>(i - 1) / p_.filesPerClass) * 360.0f;
+                else
+                    srcAz = p_.azimuthDeg;
+            }
+
             SceneParams sp;
-            if (useOceanNoise)
-            {
-                sp.azimuthDeg = -1.0f;
-            }
-            else if (p_.uniformAzimuth)
-            {
-                sp.azimuthDeg = (static_cast<float>(i - 1) / p_.filesPerClass) * 360.0f;
-            }
-            else
-            {
-                sp.azimuthDeg = p_.azimuthDeg;
-            }
             sp.soundSpeed = SOUND_SPEED_WATER;
             sp.receiverSnrDb = p_.receiverSnrDb;
             sp.noiseSeed = static_cast<uint32_t>(rng());
@@ -205,7 +203,11 @@ namespace hydro
 
             Scene scene;
             scene.setParams(sp);
-            if (source) scene.addSource(std::move(source));
+            if (source)
+            {
+                source->setAzimuthDeg(srcAz);
+                scene.addSource(std::move(source));
+            }
 
             std::array<std::vector<float>, NUM_CHANNELS> channels8;
             scene.generate(channels8, totalSamples, p_.sampleRate, uca_);
@@ -222,8 +224,8 @@ namespace hydro
             std::cout << "  [" << i << "/" << p_.filesPerClass << "] "
                 << className << " #" << std::setw(4) << std::setfill('0') << i
                 << "  az=" << std::setw(6) << std::setprecision(1)
-                << std::fixed << sp.azimuthDeg
-                << "°  recvSNR=" << std::setprecision(1)
+                << std::fixed << srcAz
+                << "\u00b0  recvSNR=" << std::setprecision(1)
                 << sp.receiverSnrDb << " dB\n";
 
             ++created;
@@ -673,11 +675,12 @@ namespace hydro
 
         for (int i = 1; i <= p_.filesPerClass; ++i)
         {
+            float srcAz = p_.uniformAzimuth
+                ? (static_cast<float>(i - 1) / p_.filesPerClass) * 360.0f
+                : p_.azimuthDeg;
+
             SceneParams sp;
-            if (p_.uniformAzimuth)
-                sp.azimuthDeg = (static_cast<float>(i - 1) / p_.filesPerClass) * 360.0f;
-            else
-                sp.azimuthDeg = p_.azimuthDeg;
+            sp.soundSpeed = SOUND_SPEED_WATER;
 
             sp.soundSpeed = SOUND_SPEED_WATER;
             sp.receiverSnrDb = p_.receiverSnrDb;
