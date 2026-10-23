@@ -676,8 +676,8 @@ namespace hydro
         for (int i = 1; i <= p_.filesPerClass; ++i)
         {
             float srcAz = p_.uniformAzimuth
-                ? (static_cast<float>(i - 1) / p_.filesPerClass) * 360.0f
-                : p_.azimuthDeg;
+                              ? (static_cast<float>(i - 1) / p_.filesPerClass) * 360.0f
+                              : p_.azimuthDeg;
 
             SceneParams sp;
             sp.soundSpeed = SOUND_SPEED_WATER;
@@ -711,7 +711,11 @@ namespace hydro
                 pp.cavitation = cavDist(rng);
                 pp.snrDb = propSnrDist(rng);
                 pp.seed = static_cast<uint32_t>(rng());
-                scene.addSource(std::make_unique<PropellerSubmarine>(pp));
+                {
+                    auto src = std::make_unique<PropellerSubmarine>(pp);
+                    src->setAzimuthDeg(srcAz);
+                    scene.addSource(std::move(src));
+                }
             }
             if (sel_.engine)
             {
@@ -722,7 +726,11 @@ namespace hydro
                 ep.mechNoiseLevel = engMechDist(rng);
                 ep.snrDb = engSnrDist(rng);
                 ep.seed = static_cast<uint32_t>(rng());
-                scene.addSource(std::make_unique<EngineSubmarine>(ep));
+                {
+                    auto src = std::make_unique<EngineSubmarine>(ep);
+                    src->setAzimuthDeg(srcAz);
+                    scene.addSource(std::move(src));
+                }
             }
             if (sel_.dolphin)
             {
@@ -747,7 +755,11 @@ namespace hydro
                 dp.burstFreqMax = DOLPHIN_BURST_FREQ_MAX;
                 dp.snrDb = dolphSnrDist(rng);
                 dp.seed = static_cast<uint32_t>(rng());
-                scene.addSource(std::make_unique<Dolphin>(dp));
+                {
+                    auto src = std::make_unique<Dolphin>(dp);
+                    src->setAzimuthDeg(srcAz);
+                    scene.addSource(std::move(src));
+                }
             }
 
             std::array<std::vector<float>, NUM_CHANNELS> ch8;
@@ -765,7 +777,7 @@ namespace hydro
             std::cout << "  [" << i << "/" << p_.filesPerClass << "] "
                 << "Combined #" << std::setw(4) << std::setfill('0') << i
                 << "  az=" << std::setw(6) << std::setprecision(1)
-                << std::fixed << sp.azimuthDeg
+                << std::fixed << srcAz
                 << "°\n";
 
             ++created;
@@ -789,6 +801,7 @@ namespace hydro
     // ============================================================
     int DatasetGenerator::generateSingleProfiles(const SceneParams& base,
                                                  int durationSec,
+                                                 float azimuthDeg,
                                                  bool mixOcean)
     {
         if (durationSec <= 0) durationSec = 10;
@@ -844,8 +857,11 @@ namespace hydro
 
             Scene scene;
             scene.setParams(sp);
-            scene.addSource(
-                std::make_unique<SubmarineProfileSource>(pp, ep));
+            {
+                auto src = std::make_unique<SubmarineProfileSource>(pp, ep);
+                src->setAzimuthDeg(azimuthDeg);
+                scene.addSource(std::move(src));
+            }
 
             std::array<std::vector<float>, NUM_CHANNELS> ch8;
             scene.generate(ch8, totalSamples, p_.sampleRate, uca_);
@@ -862,7 +878,7 @@ namespace hydro
             std::cout << "  " << wavName
                 << "  (" << durationSec << " s, az="
                 << std::fixed << std::setprecision(1)
-                << sp.azimuthDeg << "\u00b0)\n";
+                << azimuthDeg << "\u00b0)\n";
 
             ++created;
         }
