@@ -27,14 +27,19 @@ namespace hydro
     public:
         virtual ~SourceModel() = default;
 
-        virtual void generate(float* out,
-                              int numSamples,
-                              float fs,
-                              int64_t sampleOffset) = 0;
-
+        virtual void generate(float* out, int numSamples, float fs, int64_t sampleOffset) = 0;
         virtual std::string name() const = 0;
         virtual void reset() = 0;
+
+        // --- НОВОЕ ---
+        // Азимут источника, градусы 0..360. AZIMUTH_OMNI = омни (океан).
+        // По умолчанию — омни; конкретные источники задают при создании.
+        float azimuthDeg() const { return azimuthDeg_; }
+        void  setAzimuthDeg(float az) { azimuthDeg_ = az; }
     };
+
+    protected:
+    float azimuthDeg_ = AZIMUTH_OMNI;
 
     // ============================================================
     //  Винт ПЛ.
