@@ -516,7 +516,6 @@ static void runCustomScene(const UcaGeometry& uca, float fs)
         dp.receiverSnrDb = recvSnr;
         dp.azimuthDeg = azimuth;   // <--- азимут передаём через DatasetParams
 
-        DatasetParams dp;
         dp.sampleRate = fs;
         dp.outputDir = "."; // пишем в текущую папку
         dp.masterSeed = 20260924;
