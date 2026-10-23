@@ -516,11 +516,6 @@ static void runCustomScene(const UcaGeometry& uca, float fs)
         dp.receiverSnrDb = recvSnr;
         dp.azimuthDeg = azimuth;   // <--- азимут передаём через DatasetParams
 
-        dp.sampleRate = fs;
-        dp.outputDir = "."; // пишем в текущую папку
-        dp.masterSeed = 20260924;
-        dp.receiverSnrDb = recvSnr;
-
         DatasetSelection sel; // не используется в этом методе
         DatasetGenerator gen(uca, dp, sel);
         const int n = gen.generateSingleProfiles(baseSp2, 10, azimuth, mixOcean);
