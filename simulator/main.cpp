@@ -271,6 +271,20 @@ static void runCustomScene(const UcaGeometry& uca, float fs)
         }
     }
 
+    // --- Азимут дельфина: спрашиваем, только если он включён ---
+    float dolphinAz = azimuth;
+    if (useDolphin)
+    {
+        std::cout << "Азимут дельфина (0..359) [Enter = " << azimuth << "]: ";
+        std::string line;
+        std::getline(std::cin, line);
+        if (!line.empty())
+        {
+            try { dolphinAz = std::stof(line); }
+            catch (...) { dolphinAz = azimuth; }
+        }
+    }
+
     const int totalSamples = static_cast<int>(fs) * SCENE_DURATION_SEC;
 
     SceneParams baseSp;
@@ -346,28 +360,23 @@ static void runCustomScene(const UcaGeometry& uca, float fs)
 
     auto makeDolphin = []() -> std::unique_ptr<SourceModel>
     {
-        DolphinParams dp;
-        dp.numWhistlesPerSec = DOLPHIN_WHISTLES_PER_SEC;
-        dp.whistleDurationMin = DOLPHIN_WHISTLE_DUR_MIN;
-        dp.whistleDurationMax = DOLPHIN_WHISTLE_DUR_MAX;
-        dp.whistleFreqMin = DOLPHIN_WHISTLE_FREQ_MIN;
-        dp.whistleFreqMax = DOLPHIN_WHISTLE_FREQ_MAX;
-        dp.whistleSweepDepth = DOLPHIN_WHISTLE_SWEEP;
-        dp.numHarmonics = DOLPHIN_NUM_HARMONICS;
-        dp.clickRate = DOLPHIN_CLICK_RATE;
-        dp.clickDurationUs = DOLPHIN_CLICK_DUR_US;
-        dp.clickFreqMin = DOLPHIN_CLICK_FREQ_MIN;
-        dp.clickFreqMax = DOLPHIN_CLICK_FREQ_MAX;
-        dp.clicksPerTrain = DOLPHIN_CLICKS_PER_TRAIN;
-        dp.burstRate = DOLPHIN_BURST_RATE;
-        dp.burstDurationMin = DOLPHIN_BURST_DUR_MIN;
-        dp.burstDurationMax = DOLPHIN_BURST_DUR_MAX;
-        dp.burstClickIntervalUs = DOLPHIN_BURST_CLICK_US;
-        dp.burstFreqMin = DOLPHIN_BURST_FREQ_MIN;
-        dp.burstFreqMax = DOLPHIN_BURST_FREQ_MAX;
-        dp.snrDb = DOLPHIN_SNR_DB;
+        DolphinWhistleTestParams dp;
+
+        // Те же отлаженные параметры, что в generator.cpp для класса Dolphin.
+        dp.fStartMin = 2000.0f;
+        dp.fStartMax = 3000.0f;
+        dp.fEndMin = 800.0f;
+        dp.fEndMax = 1200.0f;
+
+        dp.phraseCount = 4; // 4 фразы на 5 сек
+        dp.fMaxLimit = 6000.0f; // не улетать в 11025 Гц
+
+        dp.harm1Db = -20.0f;
+        dp.harm2Db = -30.0f;
+        dp.harm3Db = -40.0f;
+
         dp.seed = DOLPHIN_SEED;
-        return std::make_unique<Dolphin>(dp);
+        return std::make_unique<DolphinWhistleSource>(dp);
     };
 
     if (useProp)
@@ -420,7 +429,7 @@ static void runCustomScene(const UcaGeometry& uca, float fs)
         scene.setParams(sp);
         {
             auto src = makeDolphin();
-            src->setAzimuthDeg(azimuth);
+            src->setAzimuthDeg(dolphinAz);
             scene.addSource(std::move(src));
         }
 
@@ -479,7 +488,7 @@ static void runCustomScene(const UcaGeometry& uca, float fs)
         if (useDolphin)
         {
             auto src = makeDolphin();
-            src->setAzimuthDeg(azimuth);
+            src->setAzimuthDeg(dolphinAz);
             scene.addSource(std::move(src));
         }
 
@@ -514,7 +523,7 @@ static void runCustomScene(const UcaGeometry& uca, float fs)
         dp.outputDir = "."; // пишем в текущую папку
         dp.masterSeed = 20260924;
         dp.receiverSnrDb = recvSnr;
-        dp.azimuthDeg = azimuth;   // <--- азимут передаём через DatasetParams
+        dp.azimuthDeg = azimuth; // <--- азимут передаём через DatasetParams
 
         DatasetSelection sel; // не используется в этом методе
         DatasetGenerator gen(uca, dp, sel);
