@@ -396,12 +396,17 @@ static void runCustomScene(const UcaGeometry& uca, float fs)
         SceneParams sp = baseSp;
         Scene scene;
         scene.setParams(sp);
-        scene.addSource(makeEng());
+        {
+            auto src = makeEng();
+            src->setAzimuthDeg(azimuth);
+            scene.addSource(std::move(src));
+        }
 
         std::array<std::vector<float>, NUM_CHANNELS> ch8;
         scene.generate(ch8, totalSamples, fs, uca);
 
         const std::string name = "scene_engine.wav";
+
         if (writeWavFloat32(name, ch8, static_cast<int>(fs)))
             std::cout << "  Saved: " << name << "\n";
         else
@@ -413,12 +418,17 @@ static void runCustomScene(const UcaGeometry& uca, float fs)
         SceneParams sp = baseSp;
         Scene scene;
         scene.setParams(sp);
-        scene.addSource(makeDolphin());
+        {
+            auto src = makeDolphin();
+            src->setAzimuthDeg(azimuth);
+            scene.addSource(std::move(src));
+        }
 
         std::array<std::vector<float>, NUM_CHANNELS> ch8;
         scene.generate(ch8, totalSamples, fs, uca);
 
         const std::string name = "scene_dolphin.wav";
+
         if (writeWavFloat32(name, ch8, static_cast<int>(fs)))
             std::cout << "  Saved: " << name << "\n";
         else
@@ -494,11 +504,17 @@ static void runCustomScene(const UcaGeometry& uca, float fs)
     {
         // Базовые параметры сцены — те же, что у остальных файлов.
         SceneParams baseSp2;
-        baseSp2.azimuthDeg = azimuth;
         baseSp2.soundSpeed = SOUND_SPEED_WATER;
         baseSp2.receiverSnrDb = recvSnr;
         baseSp2.noiseSeed = 42;
         baseSp2.oceanEnabled = false;
+
+        DatasetParams dp;
+        dp.sampleRate = fs;
+        dp.outputDir = "."; // пишем в текущую папку
+        dp.masterSeed = 20260924;
+        dp.receiverSnrDb = recvSnr;
+        dp.azimuthDeg = azimuth;   // <--- азимут передаём через DatasetParams
 
         DatasetParams dp;
         dp.sampleRate = fs;
