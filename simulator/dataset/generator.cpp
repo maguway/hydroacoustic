@@ -323,7 +323,7 @@ namespace hydro
                         return os.str();
                     },
                     rng, false,
-                    sel_.dolphin, // includeDolphin
+                    sel_.dolphinInProfiles, // includeDolphin (только если явно включено)
                     p_.dolphinAz); // dolphinAz
             }
         }
@@ -520,7 +520,7 @@ namespace hydro
         if (sel_.profiles)
         {
             for (const auto& profile : g_vesselProfiles)
-                scanClass(profile.name, false, sel_.dolphin);
+                scanClass(profile.name, false, sel_.dolphinInProfiles);
         }
         if (sel_.dolphin) scanClass("Dolphin", false, false);
         if (sel_.ocean) scanClass("OceanNoise", true, false);

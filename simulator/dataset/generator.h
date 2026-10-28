@@ -74,8 +74,13 @@ namespace hydro
     struct DatasetSelection
     {
         bool profiles = true; // 5 профилей подлодок
-        bool dolphin = true; // дельфин
+        bool dolphin = true; // класс Dolphin/ (отдельная папка)
         bool ocean = true; // шум океана (только океан, без источников)
+
+        // Добавлять ли дельфина внутрь файлов профилей (Sub_*/).
+        // НЕЗАВИСИМО от dolphin: dolphin управляет классом Dolphin/,
+        // этот флаг — «добавка к профилям». Для Single/ должен быть false.
+        bool dolphinInProfiles = false;
     };
 
     class DatasetGenerator

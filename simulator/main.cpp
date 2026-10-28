@@ -622,6 +622,14 @@ static void generateDataset(const UcaGeometry& uca, float fs)
         std::cout << "!!! Хотя бы один класс должен быть выбран. Повторите.\n\n";
     }
 
+    // --- Добавлять ли дельфина внутрь файлов профилей (Sub_*/)? ---
+    if (sel.profiles && sel.dolphin)
+    {
+        int r = askYesNo("Добавлять дельфина внутрь файлов профилей (Sub_*/)?");
+        if (r < 0) return;
+        sel.dolphinInProfiles = (r == 1);
+    }
+
     DatasetParams dp;
     dp.uniformAzimuth = true;
     dp.azimuthDeg = SCENE_AZIMUTH_DEG;
