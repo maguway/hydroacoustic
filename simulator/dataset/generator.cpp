@@ -147,7 +147,9 @@ namespace hydro
         const std::function<std::unique_ptr<SourceModel>(std::mt19937&)>& sourceFactory,
         const std::function<std::string(const SourceModel*)>& jsonExtraFields,
         std::mt19937& rng,
-        bool useOceanNoise) const
+        bool useOceanNoise,
+        bool includeDolphin,
+        float dolphinAz) const
     {
         const fs::path classDir = fs::path(p_.outputDir) / className;
         fs::create_directories(classDir);
@@ -155,20 +157,17 @@ namespace hydro
         const int totalSamples = static_cast<int>(p_.sampleRate) * p_.durationSec;
         int created = 0;
 
-        // Общие диапазоны сцены.
-
-        std::uniform_real_distribution<float> oceanLevelDist(ds::OCEAN_LEVEL_MIN, ds::OCEAN_LEVEL_MAX);
+        std::uniform_real_distribution<float> oceanLevelDist(
+            ds::OCEAN_LEVEL_MIN, ds::OCEAN_LEVEL_MAX);
 
         for (int i = 1; i <= p_.filesPerClass; ++i)
         {
             // Создаём источник (для OceanNoise — nullptr).
             std::unique_ptr<SourceModel> source;
-            const SourceModel* srcPtr = nullptr;
             if (!useOceanNoise)
             {
                 source = sourceFactory(rng);
                 if (!source) continue;
-                srcPtr = source.get(); // сохраняем ДО передачи в Scene
             }
 
             // Азимут источника: -1 для океана, иначе — расчёт по индексу.
@@ -186,8 +185,6 @@ namespace hydro
             sp.receiverSnrDb = p_.receiverSnrDb;
             sp.noiseSeed = static_cast<uint32_t>(rng());
 
-            // Шум океана — включён для класса OceanNoise, и для чистых
-            // классов, только если пользователь выбрал mixWithOcean.
             fillOceanDefaults(sp.oceanParams);
             if (useOceanNoise)
             {
@@ -196,7 +193,7 @@ namespace hydro
             }
             else
             {
-                sp.oceanEnabled = p_.mixWithOcean; // <--- УПРАВЛЯЕТСЯ НАСТРОЙКОЙ
+                sp.oceanEnabled = p_.mixWithOcean;
                 sp.oceanParams.level = oceanLevelDist(rng);
             }
             sp.oceanParams.seed = static_cast<uint32_t>(rng());
@@ -207,6 +204,24 @@ namespace hydro
             {
                 source->setAzimuthDeg(srcAz);
                 scene.addSource(std::move(source));
+            }
+            if (includeDolphin)
+            {
+                DolphinWhistleTestParams ddp;
+                ddp.fStartMin = 2000.0f;
+                ddp.fStartMax = 3000.0f;
+                ddp.fEndMin = 800.0f;
+                ddp.fEndMax = 1200.0f;
+                ddp.phraseCount = 4;
+                ddp.fMaxLimit = 6000.0f;
+                ddp.harm1Db = -20.0f;
+                ddp.harm2Db = -30.0f;
+                ddp.harm3Db = -40.0f;
+                ddp.crackleLevel = 4.0f;
+                ddp.seed = static_cast<uint32_t>(rng());
+                auto dsrc = std::make_unique<DolphinWhistleSource>(ddp);
+                dsrc->setAzimuthDeg(dolphinAz);
+                scene.addSource(std::move(dsrc));
             }
 
             std::array<std::vector<float>, NUM_CHANNELS> channels8;
@@ -225,7 +240,13 @@ namespace hydro
                 << className << " #" << std::setw(4) << std::setfill('0') << i
                 << "  az=" << std::setw(6) << std::setprecision(1)
                 << std::fixed << srcAz
-                << "\u00b0  recvSNR=" << std::setprecision(1)
+                << "\u00b0";
+            if (includeDolphin)
+            {
+                std::cout << "  dolphAz=" << std::setprecision(1) << dolphinAz
+                    << "\u00b0";
+            }
+            std::cout << "  recvSNR=" << std::setprecision(1)
                 << sp.receiverSnrDb << " dB\n";
 
             ++created;
@@ -301,7 +322,9 @@ namespace hydro
                         os << "  }";
                         return os.str();
                     },
-                    rng, false);
+                    rng, false,
+                    sel_.dolphin, // includeDolphin
+                    p_.dolphinAz); // dolphinAz
             }
         }
 
@@ -444,8 +467,11 @@ namespace hydro
 
         bool first = true;
 
-        // Один класс: className, isOmni (true для OceanNoise — нет источников).
-        auto scanClass = [&](const std::string& className, bool isOmni)
+        // Один класс: className, isOmni (true для OceanNoise — нет источников),
+        // withDolphin (true для профилей, когда sel_.dolphin == true).
+        auto scanClass = [&](const std::string& className,
+                             bool isOmni,
+                             bool withDolphin)
         {
             const fs::path classDir = fs::path(p_.outputDir) / className;
             if (!fs::exists(classDir)) return;
@@ -479,6 +505,11 @@ namespace hydro
                     f << "{ \"class\": \"" << className
                         << "\", \"azimuth_deg\": " << std::setprecision(2)
                         << az << " }";
+                    if (withDolphin)
+                    {
+                        f << ", { \"class\": \"Dolphin\", \"azimuth_deg\": "
+                            << std::setprecision(2) << p_.dolphinAz << " }";
+                    }
                 }
 
                 f << "] }";
@@ -489,10 +520,10 @@ namespace hydro
         if (sel_.profiles)
         {
             for (const auto& profile : g_vesselProfiles)
-                scanClass(profile.name, false);
+                scanClass(profile.name, false, sel_.dolphin);
         }
-        if (sel_.dolphin) scanClass("Dolphin", false);
-        if (sel_.ocean) scanClass("OceanNoise", true);
+        if (sel_.dolphin) scanClass("Dolphin", false, false);
+        if (sel_.ocean) scanClass("OceanNoise", true, false);
 
         f << "\n  ]\n";
         f << "}\n";

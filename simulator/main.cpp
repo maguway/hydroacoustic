@@ -375,7 +375,7 @@ static void runCustomScene(const UcaGeometry& uca, float fs)
         dp.harm2Db = -30.0f;
         dp.harm3Db = -40.0f;
 
-        dp.crackleLevel = 4.0f;   // громче стрёкот
+        dp.crackleLevel = 4.0f; // громче стрёкот
 
         dp.seed = DOLPHIN_SEED;
         return std::make_unique<DolphinWhistleSource>(dp);
@@ -657,8 +657,24 @@ static void generateDataset(const UcaGeometry& uca, float fs)
         }
     }
 
+    // --- Азимут дельфина: спрашиваем, только если он включён ---
+    if (sel.dolphin)
+    {
+        std::cout << "Азимут дельфина (0..359) [Enter = " << dp.dolphinAz << "]: ";
+        std::string line;
+        std::getline(std::cin, line);
+        if (!line.empty())
+        {
+            try { dp.dolphinAz = std::stof(line); }
+            catch (...)
+            {
+                /* оставляем дефолт */
+            }
+        }
+    }
+
     // --- НОВОЕ: Запрос на добавление океана к чистым классам ---
-    std::cout << "Добавлять звук океана к чистым классам (Винт, Двиг, Дельфин)? [y/n, Enter = n]: ";
+    std::cout << "Добавлять звук океана к чистым классам? [y/n, Enter = n]: ";
     {
         std::string line;
         std::getline(std::cin, line);

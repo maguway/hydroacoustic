@@ -55,10 +55,15 @@ namespace hydro
         // --- Общие параметры сцены (одинаковые для всех файлов) ---
         float receiverSnrDb = 30.0f; // SNR приёмника
 
-        // --- Азимут ---
+        // --- Азимут основного источника (подлодки/дельфина в своём классе) ---
         bool uniformAzimuth = true; // true = равномерно 0..359
         // false = фиксированный azimuthDeg
         float azimuthDeg = 45.0f; // используется если uniformAzimuth = false
+
+        // --- Азимут дельфина, когда он ДОБАВЛЯЕТСЯ к профилям ---
+        // (отдельно от основного азимута; спрашивается в меню, если
+        //  выбран «Генерировать Dolphin?» = y)
+        float dolphinAz = 200.0f;
 
         // --- НОВОЕ ---
         bool mixWithOcean = true; // Добавлять ли звук океана к чистым классам
@@ -120,7 +125,9 @@ namespace hydro
             const std::function<std::unique_ptr<SourceModel>(std::mt19937&)>& sourceFactory,
             const std::function<std::string(const SourceModel*)>& jsonExtraFields,
             std::mt19937& rng,
-            bool useOceanNoise) const;
+            bool useOceanNoise,
+            bool includeDolphin = false,
+            float dolphinAz = 0.0f) const;
 
         void writeSchemaFile() const;
         void writeLabelsFile() const;
