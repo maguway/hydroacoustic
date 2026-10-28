@@ -246,169 +246,63 @@ namespace hydro
 
         std::mt19937 rng(p_.masterSeed);
 
-        // --- Диапазоны рандомизации ---
-        std::uniform_int_distribution<int> bladesDist(ds::PROP_NUM_BLADES_MIN,
-                                                      ds::PROP_NUM_BLADES_MAX);
-        std::uniform_real_distribution<float> propRpmDist(ds::PROP_RPM_MIN,
-                                                          ds::PROP_RPM_MAX);
-        std::uniform_int_distribution<int> harmDist(ds::PROP_NUM_HARMONICS_MIN,
-                                                    ds::PROP_NUM_HARMONICS_MAX);
-        std::uniform_real_distribution<float> modDepthDist(ds::PROP_MOD_DEPTH_MIN,
-                                                           ds::PROP_MOD_DEPTH_MAX);
-        std::uniform_real_distribution<float> modHzDist(ds::PROP_MOD_HZ_MIN,
-                                                        ds::PROP_MOD_HZ_MAX);
-        std::uniform_real_distribution<float> cavDist(ds::PROP_CAVITATION_MIN,
-                                                      ds::PROP_CAVITATION_MAX);
-        std::uniform_real_distribution<float> propSnrDist(ds::PROP_SNR_DB_MIN,
-                                                          ds::PROP_SNR_DB_MAX);
-
-        std::uniform_real_distribution<float> engRpmDist(ds::ENG_RPM_MIN,
-                                                         ds::ENG_RPM_MAX);
-        std::uniform_int_distribution<int> engHarmDist(ds::ENG_NUM_HARMONICS_MIN,
-                                                       ds::ENG_NUM_HARMONICS_MAX);
-        std::uniform_int_distribution<int> engResDist(ds::ENG_NUM_RESONANCES_MIN,
-                                                      ds::ENG_NUM_RESONANCES_MAX);
-        std::uniform_real_distribution<float> engMechDist(ds::ENG_MECH_NOISE_MIN,
-                                                          ds::ENG_MECH_NOISE_MAX);
-        std::uniform_real_distribution<float> engSnrDist(ds::ENG_SNR_DB_MIN,
-                                                         ds::ENG_SNR_DB_MAX);
-
-        // --- Дельфин: диапазоны рандомизации ---
-        std::uniform_int_distribution<int> dolphWhistlesDist(ds::DOLPHIN_WHISTLES_PER_SEC_MIN,
-                                                             ds::DOLPHIN_WHISTLES_PER_SEC_MAX);
-        std::uniform_real_distribution<float> dolphFreqMinDist(ds::DOLPHIN_WHISTLE_FREQ_MIN_MIN,
-                                                               ds::DOLPHIN_WHISTLE_FREQ_MIN_MAX);
-        std::uniform_real_distribution<float> dolphFreqMaxDist(ds::DOLPHIN_WHISTLE_FREQ_MAX_MIN,
-                                                               ds::DOLPHIN_WHISTLE_FREQ_MAX_MAX);
-        std::uniform_real_distribution<float> dolphClickRateDist(ds::DOLPHIN_CLICK_RATE_MIN,
-                                                                 ds::DOLPHIN_CLICK_RATE_MAX);
-        std::uniform_real_distribution<float> dolphBurstRateDist(ds::DOLPHIN_BURST_RATE_MIN,
-                                                                 ds::DOLPHIN_BURST_RATE_MAX);
-        std::uniform_real_distribution<float> dolphSnrDist(ds::DOLPHIN_SNR_DB_MIN,
-                                                           ds::DOLPHIN_SNR_DB_MAX);
+        // --- Диапазоны рандомизации для дельфина ---
+        std::uniform_real_distribution<float> dolphFreqMinDist(
+            ds::DOLPHIN_WHISTLE_FREQ_MIN_MIN, ds::DOLPHIN_WHISTLE_FREQ_MIN_MAX);
+        std::uniform_real_distribution<float> dolphFreqMaxDist(
+            ds::DOLPHIN_WHISTLE_FREQ_MAX_MIN, ds::DOLPHIN_WHISTLE_FREQ_MAX_MAX);
 
         int totalCreated = 0;
 
-        // ---- Профили подводных аппаратов (Винт + Двигатель) ----
-        for (const auto& profile : g_vesselProfiles)
+        // ---- 5 профилей подлодок (Sub_Heavy ... Sub_Medium) ----
+        if (sel_.profiles)
         {
-            // Небольшой разброс вокруг базовых параметров профиля
-            std::uniform_real_distribution<float> propRpmJitter(0.95f, 1.05f);
-            std::uniform_real_distribution<float> engRpmJitter(0.95f, 1.05f);
-            std::uniform_real_distribution<float> cavJitter(0.9f, 1.1f);
+            for (const auto& profile : g_vesselProfiles)
+            {
+                std::uniform_real_distribution<float> propRpmJitter(0.95f, 1.05f);
+                std::uniform_real_distribution<float> engRpmJitter(0.95f, 1.05f);
+                std::uniform_real_distribution<float> cavJitter(0.9f, 1.1f);
 
-            totalCreated += generateClass(
-                profile.name,
-                [&](std::mt19937& r) -> std::unique_ptr<SourceModel>
-                {
-                    PropellerParams pp;
-                    pp.numBlades = profile.numBlades;
-                    pp.rpm = profile.rpmProp * propRpmJitter(r);
-                    pp.cavitation = profile.cavitation * cavJitter(r);
-                    pp.depthM = PROP_DEPTH_M;
-                    pp.numHarmonics = PROP_NUM_HARMONICS;
-                    pp.modulationDepth = PROP_MODULATION_DEPTH;
-                    pp.modulationHz = PROP_MODULATION_HZ;
-                    pp.snrDb = profile.snrDb;
-                    pp.seed = static_cast<uint32_t>(r());
+                std::cout << "--- " << profile.name << " ---\n";
 
-                    EngineParams ep;
-                    ep.rpm = profile.rpmEngine * engRpmJitter(r);
-                    ep.numHarmonics = ENG_NUM_HARMONICS;
-                    ep.numResonances = profile.numResonances;
-                    ep.mechNoiseLevel = profile.mechNoiseLevel;
-                    ep.snrDb = profile.snrDb;
-                    ep.seed = static_cast<uint32_t>(r());
+                totalCreated += generateClass(
+                    profile.name,
+                    [&](std::mt19937& r) -> std::unique_ptr<SourceModel>
+                    {
+                        PropellerParams pp;
+                        pp.numBlades = profile.numBlades;
+                        pp.rpm = profile.rpmProp * propRpmJitter(r);
+                        pp.cavitation = profile.cavitation * cavJitter(r);
+                        pp.depthM = PROP_DEPTH_M;
+                        pp.numHarmonics = PROP_NUM_HARMONICS;
+                        pp.modulationDepth = PROP_MODULATION_DEPTH;
+                        pp.modulationHz = PROP_MODULATION_HZ;
+                        pp.snrDb = profile.snrDb;
+                        pp.seed = static_cast<uint32_t>(r());
 
-                    return std::make_unique<SubmarineProfileSource>(pp, ep);
-                },
-                [profile](const SourceModel* src) -> std::string
-                {
-                    std::ostringstream os;
-                    os << "{\n";
-                    os << "    \"vessel_class\": \"" << profile.name << "\",\n";
-                    os << "    \"num_blades\": " << profile.numBlades << ",\n";
-                    os << "    \"rpm_prop\": " << profile.rpmProp << ",\n";
-                    os << "    \"rpm_engine\": " << profile.rpmEngine << "\n";
-                    os << "  }";
-                    return os.str();
-                },
-                rng, false);
-        }
+                        EngineParams ep;
+                        ep.rpm = profile.rpmEngine * engRpmJitter(r);
+                        ep.numHarmonics = ENG_NUM_HARMONICS;
+                        ep.numResonances = profile.numResonances;
+                        ep.mechNoiseLevel = profile.mechNoiseLevel;
+                        ep.snrDb = profile.snrDb;
+                        ep.seed = static_cast<uint32_t>(r());
 
-        // ---- PropellerSub ----
-        if (sel_.propeller)
-        {
-            std::cout << "--- PropellerSub ---\n";
-            totalCreated += generateClass(
-                "PropellerSub",
-                [&](std::mt19937& r) -> std::unique_ptr<SourceModel>
-                {
-                    PropellerParams pp;
-                    pp.numBlades = bladesDist(r);
-                    pp.rpm = propRpmDist(r);
-                    pp.depthM = PROP_DEPTH_M;
-                    pp.numHarmonics = harmDist(r);
-                    pp.modulationDepth = modDepthDist(r);
-                    pp.modulationHz = modHzDist(r);
-                    pp.cavitation = cavDist(r);
-                    pp.snrDb = propSnrDist(r);
-                    pp.seed = static_cast<uint32_t>(r());
-                    return std::make_unique<PropellerSubmarine>(pp);
-                },
-                [](const SourceModel* src) -> std::string
-                {
-                    const auto* p = dynamic_cast<const PropellerSubmarine*>(src);
-                    if (!p) return "{}";
-                    const auto& pp = p->params();
-                    std::ostringstream os;
-                    os << "{\n";
-                    os << "    \"num_blades\": " << pp.numBlades << ",\n";
-                    os << "    \"rpm\": " << std::fixed << std::setprecision(2) << pp.rpm << ",\n";
-                    os << "    \"depth_m\": " << std::setprecision(1) << pp.depthM << ",\n";
-                    os << "    \"cavitation\": " << std::setprecision(3) << pp.cavitation << ",\n";
-                    os << "    \"snr_db\": " << std::setprecision(2) << pp.snrDb << ",\n";
-                    os << "    \"seed\": " << pp.seed << "\n";
-                    os << "  }";
-                    return os.str();
-                },
-                rng, false);
-        }
-
-        // ---- EngineSub ----
-        if (sel_.engine)
-        {
-            std::cout << "\n--- EngineSub ---\n";
-            totalCreated += generateClass(
-                "EngineSub",
-                [&](std::mt19937& r) -> std::unique_ptr<SourceModel>
-                {
-                    EngineParams ep;
-                    ep.rpm = engRpmDist(r);
-                    ep.numHarmonics = engHarmDist(r);
-                    ep.numResonances = engResDist(r);
-                    ep.mechNoiseLevel = engMechDist(r);
-                    ep.snrDb = engSnrDist(r);
-                    ep.seed = static_cast<uint32_t>(r());
-                    return std::make_unique<EngineSubmarine>(ep);
-                },
-                [](const SourceModel* src) -> std::string
-                {
-                    const auto* p = dynamic_cast<const EngineSubmarine*>(src);
-                    if (!p) return "{}";
-                    const auto& ep = p->params();
-                    std::ostringstream os;
-                    os << "{\n";
-                    os << "    \"rpm\": " << std::fixed << std::setprecision(2) << ep.rpm << ",\n";
-                    os << "    \"num_harmonics\": " << ep.numHarmonics << ",\n";
-                    os << "    \"num_resonances\": " << ep.numResonances << ",\n";
-                    os << "    \"mech_noise\": " << std::setprecision(3) << ep.mechNoiseLevel << ",\n";
-                    os << "    \"snr_db\": " << std::setprecision(2) << ep.snrDb << ",\n";
-                    os << "    \"seed\": " << ep.seed << "\n";
-                    os << "  }";
-                    return os.str();
-                },
-                rng, false);
+                        return std::make_unique<SubmarineProfileSource>(pp, ep);
+                    },
+                    [profile](const SourceModel* src) -> std::string
+                    {
+                        std::ostringstream os;
+                        os << "{\n";
+                        os << "    \"vessel_class\": \"" << profile.name << "\",\n";
+                        os << "    \"num_blades\": " << profile.numBlades << ",\n";
+                        os << "    \"rpm_prop\": " << profile.rpmProp << ",\n";
+                        os << "    \"rpm_engine\": " << profile.rpmEngine << "\n";
+                        os << "  }";
+                        return os.str();
+                    },
+                    rng, false);
+            }
         }
 
         // ---- Dolphin ----
@@ -421,22 +315,19 @@ namespace hydro
                 {
                     DolphinWhistleTestParams dp;
 
-                    // Рандомизация в разумных пределах (как вы просили)
-                    dp.fStartMin = dolphFreqMinDist(r); // нижняя частота
+                    dp.fStartMin = dolphFreqMinDist(r);
                     dp.fStartMax = dp.fStartMin + 1000.0f;
-                    dp.fEndMin = dolphFreqMaxDist(r) * 0.4f; // куда свистит
+                    dp.fEndMin = dolphFreqMaxDist(r) * 0.4f;
                     dp.fEndMax = dp.fEndMin + 500.0f;
 
-                    // Случайное число фраз (3-5 штук на 5 секунд)
                     dp.phraseCount = 3 + (r() % 3);
-
-                    // Ограничитель сверху (из наших вчерашних правок)
                     dp.fMaxLimit = 6000.0f;
 
-                    // Приглушенные гармоники (из наших вчерашних правок)
                     dp.harm1Db = -20.0f;
                     dp.harm2Db = -30.0f;
                     dp.harm3Db = -40.0f;
+
+                    dp.crackleLevel = 4.0f;
 
                     dp.seed = static_cast<uint32_t>(r());
 
@@ -444,18 +335,16 @@ namespace hydro
                 },
                 [](const SourceModel* src) -> std::string
                 {
-                    const auto* p = dynamic_cast<const Dolphin*>(src);
+                    const auto* p = dynamic_cast<const DolphinWhistleSource*>(src);
                     if (!p) return "{}";
                     const auto& dp = p->params();
                     std::ostringstream os;
                     os << "{\n";
-                    os << "    \"num_whistles_per_sec\": " << dp.numWhistlesPerSec << ",\n";
-                    os << "    \"whistle_freq_min\": " << std::fixed << std::setprecision(1) << dp.whistleFreqMin <<
-                        ",\n";
-                    os << "    \"whistle_freq_max\": " << std::setprecision(1) << dp.whistleFreqMax << ",\n";
-                    os << "    \"click_rate\": " << std::setprecision(3) << dp.clickRate << ",\n";
-                    os << "    \"burst_rate\": " << std::setprecision(3) << dp.burstRate << ",\n";
-                    os << "    \"snr_db\": " << std::setprecision(2) << dp.snrDb << ",\n";
+                    os << "    \"f_start_min\": " << std::fixed << std::setprecision(1) << dp.fStartMin << ",\n";
+                    os << "    \"f_start_max\": " << std::setprecision(1) << dp.fStartMax << ",\n";
+                    os << "    \"f_end_min\": " << std::setprecision(1) << dp.fEndMin << ",\n";
+                    os << "    \"f_end_max\": " << std::setprecision(1) << dp.fEndMax << ",\n";
+                    os << "    \"phrase_count\": " << dp.phraseCount << ",\n";
                     os << "    \"seed\": " << dp.seed << "\n";
                     os << "  }";
                     return os.str();
@@ -477,18 +366,6 @@ namespace hydro
                 rng, true);
         }
 
-        // ---- Combined — сумма всех выбранных компонент ----
-        // Создаётся, только если выбрано 2+ компоненты.
-        int selectedCount = (sel_.propeller ? 1 : 0)
-            + (sel_.engine ? 1 : 0)
-            + (sel_.dolphin ? 1 : 0)
-            + (sel_.ocean ? 1 : 0);
-        if (selectedCount >= 2)
-        {
-            std::cout << "\n--- Combined ---\n";
-            totalCreated += generateCombinedClass(rng);
-        }
-
         // ---- Сводный labels.json ----
         writeLabelsFile();
 
@@ -508,45 +385,46 @@ namespace hydro
 
         f << "{\n";
         f << "  \"_description\": \"hydroacoustic dataset. Each sample = 8-ch float32 WAV + JSON metadata.\",\n";
-        f << "  \"_format_version\": \"1.0\",\n\n";
-        f << "  \"class\": \"ML class name (PropellerSub | EngineSub | Dolphin | OceanNoise | ...)\",\n";
-        f << "  \"azimuth_deg\": \"source azimuth, degrees 0..359.9; -1 means no direction (OceanNoise)\",\n";
+        f << "  \"_format_version\": \"2.0\",\n\n";
+        f <<
+            "  \"class\": \"ML class name: Sub_Heavy | Sub_Fast | Sub_Stealth | Sub_Rusty | Sub_Medium | Dolphin | OceanNoise\",\n";
+        f <<
+            "  \"sources\": \"array of active sources; each = { class, azimuth_deg }. OceanNoise has empty sources.\",\n";
+        f << "  \"azimuth_deg\": \"source azimuth, degrees 0..359.9 (per source)\",\n";
         f << "  \"sample_rate\": \"WAV sample rate, Hz\",\n";
         f << "  \"duration_sec\": \"sample duration, seconds\",\n";
         f << "  \"num_channels\": \"WAV channel count (= 8)\",\n";
-        f << "  \"receiver_snr_db\": \"receiver noise SNR, dB\",\n";
-        f << "  \"ocean_level\": \"ocean noise level, 0..1\",\n";
-        f << "  \"params\": \"source-specific parameters, object\",\n\n";
-        f << "  \"params_PropellerSub\": {\n";
+        f << "  \"receiver_snr_db\": \"receiver noise SNR, dB\",\n\n";
+        f << "  \"params_SubmarineProfile\": {\n";
+        f << "    \"vessel_class\": \"profile name\",\n";
         f << "    \"num_blades\": \"blade count\",\n";
-        f << "    \"rpm\": \"shaft rpm\",\n";
-        f << "    \"depth_m\": \"depth, meters\",\n";
-        f << "    \"cavitation\": \"cavitation level, 0..1\",\n";
-        f << "    \"snr_db\": \"internal SNR, dB\",\n";
-        f << "    \"seed\": \"rng seed\"\n";
-        f << "  },\n\n";
-        f << "  \"params_EngineSub\": {\n";
-        f << "    \"rpm\": \"engine rpm\",\n";
-        f << "    \"num_harmonics\": \"harmonic count\",\n";
-        f << "    \"num_resonances\": \"hull resonance count\",\n";
-        f << "    \"mech_noise\": \"mechanical noise level, 0..1\",\n";
-        f << "    \"snr_db\": \"internal SNR, dB\",\n";
-        f << "    \"seed\": \"rng seed\"\n";
+        f << "    \"rpm_prop\": \"propeller shaft rpm\",\n";
+        f << "    \"rpm_engine\": \"engine rpm\"\n";
         f << "  },\n\n";
         f << "  \"params_Dolphin\": {\n";
-        f << "    \"num_whistles_per_sec\": \"whistles per second\",\n";
-        f << "    \"whistle_freq_min\": \"whistle lower frequency bound, Hz\",\n";
-        f << "    \"whistle_freq_max\": \"whistle upper frequency bound, Hz\",\n";
-        f << "    \"click_rate\": \"click trains per second\",\n";
-        f << "    \"burst_rate\": \"burst pulses per second\",\n";
-        f << "    \"snr_db\": \"internal SNR, dB\",\n";
+        f << "    \"f_start_min\": \"whistle start freq lower bound, Hz\",\n";
+        f << "    \"f_start_max\": \"whistle start freq upper bound, Hz\",\n";
+        f << "    \"f_end_min\": \"whistle end freq lower bound, Hz\",\n";
+        f << "    \"f_end_max\": \"whistle end freq upper bound, Hz\",\n";
+        f << "    \"phrase_count\": \"whistle phrases per sample\",\n";
         f << "    \"seed\": \"rng seed\"\n";
+        f << "  },\n\n";
+        f << "  \"params_OceanNoise\": {\n";
+        f << "    \"_note\": \"ocean noise only, no active source\"\n";
         f << "  }\n";
         f << "}\n";
     }
 
     // ------------------------------------------------------------
     //  Сводный файл меток labels.json.
+    //
+    //  Формат: массив "files", для каждого файла — массив "sources"
+    //  (даже если источник один). Это сразу готово к multi-source.
+    //
+    //  Для одиночных классов "sources" содержит один элемент:
+    //    { "class": "Sub_Heavy", "azimuth_deg": 45.0 }
+    //  Для OceanNoise — "sources": [] (нет активных источников),
+    //  а сам файл — класс OceanNoise.
     // ------------------------------------------------------------
     void DatasetGenerator::writeLabelsFile() const
     {
@@ -555,7 +433,7 @@ namespace hydro
         if (!f) return;
 
         f << "{\n";
-        f << "  \"version\": \"1.0\",\n";
+        f << "  \"version\": \"2.0\",\n";
         f << "  \"dataset_dir\": \"" << p_.outputDir << "\",\n";
         f << "  \"files_per_class\": " << p_.filesPerClass << ",\n";
         f << "  \"sample_rate\": " << static_cast<int>(p_.sampleRate) << ",\n";
@@ -565,6 +443,8 @@ namespace hydro
         f << "  \"files\": [\n";
 
         bool first = true;
+
+        // Один класс: className, isOmni (true для OceanNoise — нет источников).
         auto scanClass = [&](const std::string& className, bool isOmni)
         {
             const fs::path classDir = fs::path(p_.outputDir) / className;
@@ -575,215 +455,47 @@ namespace hydro
                 const fs::path wavPath = classDir / makeFileName(i, ".wav");
                 if (!fs::exists(wavPath)) continue;
 
-                float az;
-                if (isOmni)
+                float az = 0.0f;
+                if (!isOmni)
                 {
-                    az = -1.0f;
-                }
-                else if (p_.uniformAzimuth)
-                {
-                    az = (static_cast<float>(i - 1) / p_.filesPerClass) * 360.0f;
-                }
-                else
-                {
-                    az = p_.azimuthDeg;
+                    if (p_.uniformAzimuth)
+                        az = (static_cast<float>(i - 1) / p_.filesPerClass) * 360.0f;
+                    else
+                        az = p_.azimuthDeg;
                 }
 
                 if (!first) f << ",\n";
                 first = false;
 
-                f << "    { \"file\": \"" << className << "/" << makeFileName(i, ".wav")
-                    << "\", \"class\": \"" << className
-                    << "\", \"azimuth_deg\": " << std::setprecision(2) << az
-                    << ", \"receiver_snr_db\": " << std::setprecision(2) << p_.receiverSnrDb
-                    << " }";
+                f << "    { \"file\": \"" << className << "/"
+                    << makeFileName(i, ".wav") << "\", "
+                    << "\"class\": \"" << className << "\", "
+                    << "\"receiver_snr_db\": " << std::setprecision(2)
+                    << p_.receiverSnrDb << ", "
+                    << "\"sources\": [";
+
+                if (!isOmni)
+                {
+                    f << "{ \"class\": \"" << className
+                        << "\", \"azimuth_deg\": " << std::setprecision(2)
+                        << az << " }";
+                }
+
+                f << "] }";
             }
         };
 
-        // Сканируем все 5 профилей
-        for (const auto& profile : g_vesselProfiles)
+        // 5 профилей + Dolphin + OceanNoise.
+        if (sel_.profiles)
         {
-            scanClass(profile.name, false);
+            for (const auto& profile : g_vesselProfiles)
+                scanClass(profile.name, false);
         }
         if (sel_.dolphin) scanClass("Dolphin", false);
         if (sel_.ocean) scanClass("OceanNoise", true);
 
-        // Combined — только если выбрано 2+ компоненты.
-        int selectedCount = (sel_.propeller ? 1 : 0)
-            + (sel_.engine ? 1 : 0)
-            + (sel_.dolphin ? 1 : 0)
-            + (sel_.ocean ? 1 : 0);
-        if (selectedCount >= 2) scanClass("Combined", false);
-
         f << "\n  ]\n";
         f << "}\n";
-    }
-
-    // ------------------------------------------------------------
-    //  Combined — сумма всех ВЫБРАННЫХ компонент в одном файле.
-    // ------------------------------------------------------------
-    int DatasetGenerator::generateCombinedClass(std::mt19937& rng) const
-    {
-        const fs::path classDir = fs::path(p_.outputDir) / "Combined";
-        fs::create_directories(classDir);
-
-        const int totalSamples = static_cast<int>(p_.sampleRate) * p_.durationSec;
-        int created = 0;
-
-        // Диапазоны рандомизации (те же, что и в generate()).
-        std::uniform_int_distribution<int> bladesDist(ds::PROP_NUM_BLADES_MIN,
-                                                      ds::PROP_NUM_BLADES_MAX);
-        std::uniform_real_distribution<float> propRpmDist(ds::PROP_RPM_MIN,
-                                                          ds::PROP_RPM_MAX);
-        std::uniform_int_distribution<int> harmDist(ds::PROP_NUM_HARMONICS_MIN,
-                                                    ds::PROP_NUM_HARMONICS_MAX);
-        std::uniform_real_distribution<float> modDepthDist(ds::PROP_MOD_DEPTH_MIN,
-                                                           ds::PROP_MOD_DEPTH_MAX);
-        std::uniform_real_distribution<float> modHzDist(ds::PROP_MOD_HZ_MIN,
-                                                        ds::PROP_MOD_HZ_MAX);
-        std::uniform_real_distribution<float> cavDist(ds::PROP_CAVITATION_MIN,
-                                                      ds::PROP_CAVITATION_MAX);
-        std::uniform_real_distribution<float> propSnrDist(ds::PROP_SNR_DB_MIN,
-                                                          ds::PROP_SNR_DB_MAX);
-
-        std::uniform_real_distribution<float> engRpmDist(ds::ENG_RPM_MIN,
-                                                         ds::ENG_RPM_MAX);
-        std::uniform_int_distribution<int> engHarmDist(ds::ENG_NUM_HARMONICS_MIN,
-                                                       ds::ENG_NUM_HARMONICS_MAX);
-        std::uniform_int_distribution<int> engResDist(ds::ENG_NUM_RESONANCES_MIN,
-                                                      ds::ENG_NUM_RESONANCES_MAX);
-        std::uniform_real_distribution<float> engMechDist(ds::ENG_MECH_NOISE_MIN,
-                                                          ds::ENG_MECH_NOISE_MAX);
-        std::uniform_real_distribution<float> engSnrDist(ds::ENG_SNR_DB_MIN,
-                                                         ds::ENG_SNR_DB_MAX);
-
-        std::uniform_int_distribution<int> dolphWhistlesDist(ds::DOLPHIN_WHISTLES_PER_SEC_MIN,
-                                                             ds::DOLPHIN_WHISTLES_PER_SEC_MAX);
-        std::uniform_real_distribution<float> dolphFreqMinDist(ds::DOLPHIN_WHISTLE_FREQ_MIN_MIN,
-                                                               ds::DOLPHIN_WHISTLE_FREQ_MIN_MAX);
-        std::uniform_real_distribution<float> dolphFreqMaxDist(ds::DOLPHIN_WHISTLE_FREQ_MAX_MIN,
-                                                               ds::DOLPHIN_WHISTLE_FREQ_MAX_MAX);
-        std::uniform_real_distribution<float> dolphClickRateDist(ds::DOLPHIN_CLICK_RATE_MIN,
-                                                                 ds::DOLPHIN_CLICK_RATE_MAX);
-        std::uniform_real_distribution<float> dolphBurstRateDist(ds::DOLPHIN_BURST_RATE_MIN,
-                                                                 ds::DOLPHIN_BURST_RATE_MAX);
-        std::uniform_real_distribution<float> dolphSnrDist(ds::DOLPHIN_SNR_DB_MIN,
-                                                           ds::DOLPHIN_SNR_DB_MAX);
-
-        std::uniform_real_distribution<float> oceanLevelDist(ds::OCEAN_LEVEL_MIN,
-                                                             ds::OCEAN_LEVEL_MAX);
-
-        for (int i = 1; i <= p_.filesPerClass; ++i)
-        {
-            float srcAz = p_.uniformAzimuth
-                              ? (static_cast<float>(i - 1) / p_.filesPerClass) * 360.0f
-                              : p_.azimuthDeg;
-
-            SceneParams sp;
-            sp.soundSpeed = SOUND_SPEED_WATER;
-
-            sp.soundSpeed = SOUND_SPEED_WATER;
-            sp.receiverSnrDb = p_.receiverSnrDb;
-            sp.noiseSeed = rng();
-
-            // Океан — включаем, если выбран.
-            fillOceanDefaults(sp.oceanParams);
-            sp.oceanEnabled = sel_.ocean;
-            if (sel_.ocean)
-            {
-                sp.oceanParams.level = oceanLevelDist(rng);
-            }
-            sp.oceanParams.seed = rng();
-
-            Scene scene;
-            scene.setParams(sp);
-
-            // Добавляем выбранные пространственные источники.
-            if (sel_.propeller)
-            {
-                PropellerParams pp;
-                pp.numBlades = bladesDist(rng);
-                pp.rpm = propRpmDist(rng);
-                pp.depthM = PROP_DEPTH_M;
-                pp.numHarmonics = harmDist(rng);
-                pp.modulationDepth = modDepthDist(rng);
-                pp.modulationHz = modHzDist(rng);
-                pp.cavitation = cavDist(rng);
-                pp.snrDb = propSnrDist(rng);
-                pp.seed = static_cast<uint32_t>(rng());
-                {
-                    auto src = std::make_unique<PropellerSubmarine>(pp);
-                    src->setAzimuthDeg(srcAz);
-                    scene.addSource(std::move(src));
-                }
-            }
-            if (sel_.engine)
-            {
-                EngineParams ep;
-                ep.rpm = engRpmDist(rng);
-                ep.numHarmonics = engHarmDist(rng);
-                ep.numResonances = engResDist(rng);
-                ep.mechNoiseLevel = engMechDist(rng);
-                ep.snrDb = engSnrDist(rng);
-                ep.seed = static_cast<uint32_t>(rng());
-                {
-                    auto src = std::make_unique<EngineSubmarine>(ep);
-                    src->setAzimuthDeg(srcAz);
-                    scene.addSource(std::move(src));
-                }
-            }
-            if (sel_.dolphin)
-            {
-                DolphinParams dp;
-                dp.numWhistlesPerSec = dolphWhistlesDist(rng);
-                dp.whistleDurationMin = DOLPHIN_WHISTLE_DUR_MIN;
-                dp.whistleDurationMax = DOLPHIN_WHISTLE_DUR_MAX;
-                dp.whistleFreqMin = dolphFreqMinDist(rng);
-                dp.whistleFreqMax = dolphFreqMaxDist(rng);
-                dp.whistleSweepDepth = DOLPHIN_WHISTLE_SWEEP;
-                dp.numHarmonics = DOLPHIN_NUM_HARMONICS;
-                dp.clickRate = dolphClickRateDist(rng);
-                dp.clickDurationUs = DOLPHIN_CLICK_DUR_US;
-                dp.clickFreqMin = DOLPHIN_CLICK_FREQ_MIN;
-                dp.clickFreqMax = DOLPHIN_CLICK_FREQ_MAX;
-                dp.clicksPerTrain = DOLPHIN_CLICKS_PER_TRAIN;
-                dp.burstRate = dolphBurstRateDist(rng);
-                dp.burstDurationMin = DOLPHIN_BURST_DUR_MIN;
-                dp.burstDurationMax = DOLPHIN_BURST_DUR_MAX;
-                dp.burstClickIntervalUs = DOLPHIN_BURST_CLICK_US;
-                dp.burstFreqMin = DOLPHIN_BURST_FREQ_MIN;
-                dp.burstFreqMax = DOLPHIN_BURST_FREQ_MAX;
-                dp.snrDb = dolphSnrDist(rng);
-                dp.seed = static_cast<uint32_t>(rng());
-                {
-                    auto src = std::make_unique<Dolphin>(dp);
-                    src->setAzimuthDeg(srcAz);
-                    scene.addSource(std::move(src));
-                }
-            }
-
-            std::array<std::vector<float>, NUM_CHANNELS> ch8;
-            scene.generate(ch8, totalSamples, p_.sampleRate, uca_);
-
-            const std::string wavName = makeFileName(i, ".wav");
-            const fs::path wavPath = classDir / wavName;
-            if (!writeWavFloat32(wavPath.string(), ch8,
-                                 static_cast<int>(p_.sampleRate)))
-            {
-                std::cerr << "  [FAIL] " << wavPath << "\n";
-                continue;
-            }
-
-            std::cout << "  [" << i << "/" << p_.filesPerClass << "] "
-                << "Combined #" << std::setw(4) << std::setfill('0') << i
-                << "  az=" << std::setw(6) << std::setprecision(1)
-                << std::fixed << srcAz
-                << "°\n";
-
-            ++created;
-        }
-
-        return created;
     }
 
 
@@ -876,7 +588,7 @@ namespace hydro
                 ddp.harm1Db = -20.0f;
                 ddp.harm2Db = -30.0f;
                 ddp.harm3Db = -40.0f;
-                ddp.crackleLevel = 4.0f;   // <--- громче стрёкот
+                ddp.crackleLevel = 4.0f; // <--- громче стрёкот
                 ddp.seed = static_cast<uint32_t>(rng());
                 auto dsrc = std::make_unique<DolphinWhistleSource>(ddp);
                 dsrc->setAzimuthDeg(dolphinAz);

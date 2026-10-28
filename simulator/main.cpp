@@ -375,6 +375,8 @@ static void runCustomScene(const UcaGeometry& uca, float fs)
         dp.harm2Db = -30.0f;
         dp.harm3Db = -40.0f;
 
+        dp.crackleLevel = 4.0f;   // громче стрёкот
+
         dp.seed = DOLPHIN_SEED;
         return std::make_unique<DolphinWhistleSource>(dp);
     };
@@ -604,23 +606,19 @@ static void generateDataset(const UcaGeometry& uca, float fs)
     DatasetSelection sel;
     while (true)
     {
-        int r = askYesNo("Генерировать PropellerSub?");
+        int r = askYesNo("Генерировать 5 профилей подлодок?");
         if (r < 0) return;
-        sel.propeller = (r == 1);
+        sel.profiles = (r == 1);
 
-        r = askYesNo("Генерировать EngineSub?   ");
-        if (r < 0) return;
-        sel.engine = (r == 1);
-
-        r = askYesNo("Генерировать Dolphin?     ");
+        r = askYesNo("Генерировать Dolphin?            ");
         if (r < 0) return;
         sel.dolphin = (r == 1);
 
-        r = askYesNo("Генерировать OceanNoise?  ");
+        r = askYesNo("Генерировать OceanNoise?         ");
         if (r < 0) return;
         sel.ocean = (r == 1);
 
-        if (sel.propeller || sel.engine || sel.dolphin || sel.ocean) break;
+        if (sel.profiles || sel.dolphin || sel.ocean) break;
         std::cout << "!!! Хотя бы один класс должен быть выбран. Повторите.\n\n";
     }
 
@@ -628,7 +626,7 @@ static void generateDataset(const UcaGeometry& uca, float fs)
     dp.uniformAzimuth = true;
     dp.azimuthDeg = SCENE_AZIMUTH_DEG;
 
-    if (sel.propeller || sel.engine || sel.dolphin)
+    if (sel.profiles || sel.dolphin)
     {
         int r = askYesNo("Равномерный азимут 0..359?  ");
         if (r < 0) return;

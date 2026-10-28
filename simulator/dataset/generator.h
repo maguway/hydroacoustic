@@ -65,12 +65,12 @@ namespace hydro
     };
 
     // Что генерировать. Минимум один класс должен быть включён.
+    // Профили (Sub_Heavy ... Sub_Medium) включаются/выключаются вместе.
     struct DatasetSelection
     {
-        bool propeller = true;
-        bool engine = true;
-        bool dolphin = true;
-        bool ocean = true;
+        bool profiles = true; // 5 профилей подлодок
+        bool dolphin = true; // дельфин
+        bool ocean = true; // шум океана (только океан, без источников)
     };
 
     class DatasetGenerator
@@ -124,7 +124,6 @@ namespace hydro
 
         void writeSchemaFile() const;
         void writeLabelsFile() const;
-        int generateCombinedClass(std::mt19937& rng) const;
         static std::string makeFileName(int index, const std::string& ext);
     };
 } // namespace hydro
