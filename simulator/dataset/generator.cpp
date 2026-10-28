@@ -802,6 +802,8 @@ namespace hydro
     int DatasetGenerator::generateSingleProfiles(const SceneParams& base,
                                                  int durationSec,
                                                  float azimuthDeg,
+                                                 float dolphinAz,
+                                                 bool includeDolphin,
                                                  bool mixOcean)
     {
         if (durationSec <= 0) durationSec = 10;
@@ -861,6 +863,24 @@ namespace hydro
                 auto src = std::make_unique<SubmarineProfileSource>(pp, ep);
                 src->setAzimuthDeg(azimuthDeg);
                 scene.addSource(std::move(src));
+            }
+            if (includeDolphin)
+            {
+                DolphinWhistleTestParams ddp;
+                ddp.fStartMin = 2000.0f;
+                ddp.fStartMax = 3000.0f;
+                ddp.fEndMin = 800.0f;
+                ddp.fEndMax = 1200.0f;
+                ddp.phraseCount = 4;
+                ddp.fMaxLimit = 6000.0f;
+                ddp.harm1Db = -20.0f;
+                ddp.harm2Db = -30.0f;
+                ddp.harm3Db = -40.0f;
+                ddp.crackleLevel = 4.0f;   // <--- громче стрёкот
+                ddp.seed = static_cast<uint32_t>(rng());
+                auto dsrc = std::make_unique<DolphinWhistleSource>(ddp);
+                dsrc->setAzimuthDeg(dolphinAz);
+                scene.addSource(std::move(dsrc));
             }
 
             std::array<std::vector<float>, NUM_CHANNELS> ch8;
