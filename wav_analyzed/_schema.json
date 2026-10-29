@@ -1,0 +1,32 @@
+{
+  "_description": "hydroacoustic dataset. Each sample = 8-ch float32 WAV + JSON metadata.",
+  "_format_version": "2.0",
+
+  "class": "ML class name: Sub_Heavy | Sub_Fast | Sub_Stealth | Sub_Rusty | Sub_Medium | Dolphin | OceanNoise",
+  "sources": "array of active sources; each = { class, azimuth_deg }. OceanNoise has empty sources.",
+  "azimuth_deg": "source azimuth, degrees 0..359.9 (per source)",
+  "sample_rate": "WAV sample rate, Hz",
+  "duration_sec": "sample duration, seconds",
+  "num_channels": "WAV channel count (= 8)",
+  "receiver_snr_db": "receiver noise SNR, dB",
+
+  "params_SubmarineProfile": {
+    "vessel_class": "profile name",
+    "num_blades": "blade count",
+    "rpm_prop": "propeller shaft rpm",
+    "rpm_engine": "engine rpm"
+  },
+
+  "params_Dolphin": {
+    "f_start_min": "whistle start freq lower bound, Hz",
+    "f_start_max": "whistle start freq upper bound, Hz",
+    "f_end_min": "whistle end freq lower bound, Hz",
+    "f_end_max": "whistle end freq upper bound, Hz",
+    "phrase_count": "whistle phrases per sample",
+    "seed": "rng seed"
+  },
+
+  "params_OceanNoise": {
+    "_note": "ocean noise only, no active source"
+  }
+}
